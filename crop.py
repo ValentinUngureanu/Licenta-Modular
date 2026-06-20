@@ -156,7 +156,6 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
     left_margin_limit = max(30, int(LEFT_MARGIN_SEARCH_FRAC * width))
     default_left_bound = max(5, int(DEFAULT_LEFT_BOUND_FRAC * width))
     crop_right_margin = max(8, int(CROP_RIGHT_MARGIN_FRAC * width))
-
     kernel_width = max(2, int(HORIZONTAL_KERNEL_WIDTH_FRAC * width))
 
     _, image_binary = cv2.threshold(
@@ -174,7 +173,6 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
     )
 
     contours = get_contours(threshold)
-
     large_mask = np.zeros_like(image_binary)
 
     for contour in contours:
@@ -223,11 +221,7 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
         if len(approx) in [2, 4]:
             cv2.drawContours(small_mask, [approx], 0, 255, -1)
 
-    horizontal_kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (kernel_width, 1),
-    )
-
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_width, 1))
     temp = cv2.erode(small_mask, horizontal_kernel, iterations=MORPH_ITERATIONS)
     horizontal_lines = cv2.dilate(temp, horizontal_kernel, iterations=MORPH_ITERATIONS)
 
@@ -261,7 +255,6 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
 
 def estimate_crop_box_from_activity(gray) -> CropBox:
     height, width = gray.shape[:2]
-
     gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
     non_black = (gray_blur > 12) & (gray_blur < 245)
@@ -340,7 +333,6 @@ def choose_vertical_crop_box(gray) -> CropBox:
         center_x = (box.left + box.right) / 2.0 / max(width, 1)
 
         score = 0.0
-
         score += 2.0 * min(1.0, box.width / max(0.55 * width, 1))
         score += 2.0 * min(1.0, box.height / max(0.45 * height, 1))
         score -= 1.2 * abs(area_frac - 0.55)
@@ -383,7 +375,6 @@ def estimate_left_right_from_vertical_crop(gray_vertical) -> CropBox:
         edge_density = edge_density / np.max(edge_density)
 
     signal = 0.8 * non_black_density + 0.2 * edge_density
-
     smooth_width = max(9, int(round(HORIZONTAL_SMOOTH_FRAC * width)))
 
     if smooth_width % 2 == 0:
@@ -400,14 +391,12 @@ def estimate_left_right_from_vertical_crop(gray_vertical) -> CropBox:
     for percentile in HORIZONTAL_THRESHOLD_PERCENTILES:
         base = float(np.percentile(signal_smooth, percentile))
         threshold = max(0.01, base * HORIZONTAL_THRESHOLD_SCALE)
-
         segment = largest_true_segment(signal_smooth > threshold, min_len)
 
         if segment is None:
             continue
 
         left, right = segment
-
         pad = max(4, int(round(HORIZONTAL_PAD_FRAC * width)))
 
         left = max(0, left - pad)
@@ -421,7 +410,6 @@ def estimate_left_right_from_vertical_crop(gray_vertical) -> CropBox:
             continue
 
         score = 0.0
-
         score += 2.5 * min(1.0, width_frac / 0.75)
         score -= 1.2 * abs(center_frac - 0.5)
         score -= 2.0 * max(0.0, width_frac - HORIZONTAL_MAX_FULL_WIDTH_FRAC)
@@ -437,7 +425,6 @@ def estimate_left_right_from_vertical_crop(gray_vertical) -> CropBox:
             return CropBox(0, 0, height, width, False)
 
         pad = max(4, int(round(HORIZONTAL_PAD_FRAC * width)))
-
         left = max(0, int(np.min(xs)) - pad)
         right = min(width, int(np.max(xs)) + 1 + pad)
 
@@ -499,25 +486,10 @@ def estimate_crop_box(image_bgr) -> CropBox:
 
     final_box = clamp_box(final_box, gray.shape)
 
-    add_top = max(
-        EXTRA_CROP_TOP_PX,
-        int(round(EXTRA_CROP_TOP_FRAC * final_box.height)),
-    )
-
-    add_bottom = max(
-        EXTRA_CROP_BOTTOM_PX,
-        int(round(EXTRA_CROP_BOTTOM_FRAC * final_box.height)),
-    )
-
-    add_left = max(
-        EXTRA_CROP_LEFT_PX,
-        int(round(EXTRA_CROP_LEFT_FRAC * final_box.width)),
-    )
-
-    add_right = max(
-        EXTRA_CROP_RIGHT_PX,
-        int(round(EXTRA_CROP_RIGHT_FRAC * final_box.width)),
-    )
+    add_top = max(EXTRA_CROP_TOP_PX, int(round(EXTRA_CROP_TOP_FRAC * final_box.height)))
+    add_bottom = max(EXTRA_CROP_BOTTOM_PX, int(round(EXTRA_CROP_BOTTOM_FRAC * final_box.height)))
+    add_left = max(EXTRA_CROP_LEFT_PX, int(round(EXTRA_CROP_LEFT_FRAC * final_box.width)))
+    add_right = max(EXTRA_CROP_RIGHT_PX, int(round(EXTRA_CROP_RIGHT_FRAC * final_box.width)))
 
     final_box = CropBox(
         top=final_box.top + add_top,
@@ -527,9 +499,7 @@ def estimate_crop_box(image_bgr) -> CropBox:
         valid=final_box.valid,
     )
 
-    final_box = clamp_box(final_box, gray.shape)
-
-    return final_box
+    return clamp_box(final_box, gray.shape)
 
 
 def apply_crop(image_bgr, crop_box: CropBox):
@@ -552,7 +522,6 @@ def crop_ultrasound(image_bgr):
 
 def draw_crop_box_on_original(image_bgr, crop_box: CropBox):
     result = image_bgr.copy()
-
     color = (0, 255, 255) if crop_box.valid else (0, 0, 255)
 
     cv2.rectangle(
