@@ -1,8 +1,8 @@
-# MAIN ALL IMAGES - FIX POZA 46 GAP FLOATING RIGHT 2
+# MAIN ALL IMAGES - FIX POZA 44 UPPER RIGHT GAP 1
 # Ruleaza toate pozele gasite in ORIGINAL_IMAGES.
 # Salveaza rezultatele normale pentru toate pozele.
-# Salveaza debug detaliat separat pentru poza 46.
-# Fix testat: elimina componenta gap_rescue izolata in dreapta, fara suport local pe aceeasi banda.
+# Salveaza debug detaliat separat pentru poza 44.
+# Fix testat: elimina componenta gap_rescue din dreapta care sare mult deasupra directiei locale a pleurei.
 import shutil
 import re
 import cv2
@@ -90,8 +90,8 @@ FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_LEFT_GUARD_ONLY.jpg"
 
-FOCUS_DEBUG_INDICES = {46}
-FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_46_GAP_FLOATING_GUARD2"
+FOCUS_DEBUG_INDICES = {44}
+FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_44_UPPER_RIGHT_GAP1"
 
 
 SMALL_COMPONENT_CLEAN_ENABLE = True
@@ -493,6 +493,107 @@ GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL = 18
 GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW = 90
 GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND = 35
 GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS = 8
+
+
+
+
+GAP_UPPER_RIGHT_GUARD_ENABLE = True
+GAP_UPPER_RIGHT_MIN_AREA = 120
+GAP_UPPER_RIGHT_MAX_AREA = 900
+GAP_UPPER_RIGHT_MIN_WIDTH = 12
+GAP_UPPER_RIGHT_MAX_WIDTH = 120
+GAP_UPPER_RIGHT_MAX_HEIGHT = 60
+GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL = 8
+GAP_UPPER_RIGHT_CONTEXT_WINDOW = 120
+GAP_UPPER_RIGHT_MIN_CONTEXT_PIXELS = 20
+GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX = 35
+
+
+def filter_upper_right_gap_rescue(
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
+):
+    if not GAP_UPPER_RIGHT_GUARD_ENABLE:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if gap_rescue_mask is None or principal_after_horizontal_mask is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
+
+    if principal_bounds is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    support_mask = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    support_mask[principal_after_horizontal_mask > 0] = 255
+
+    if secondary_mask_normal is not None:
+        support_mask[secondary_mask_normal > 0] = 255
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (gap_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+
+    image_h, image_w = gap_rescue_mask.shape[:2]
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        component_pixels = labels == label
+        component_median_y = float(centroids[label][1])
+
+        right_gap_from_principal = x - principal_bounds["max_x"] - 1
+
+        size_matches = (
+            area >= GAP_UPPER_RIGHT_MIN_AREA
+            and area <= GAP_UPPER_RIGHT_MAX_AREA
+            and width >= GAP_UPPER_RIGHT_MIN_WIDTH
+            and width <= GAP_UPPER_RIGHT_MAX_WIDTH
+            and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
+        )
+
+        is_right_of_principal = (
+            right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+        )
+
+        x1_context = max(0, x - GAP_UPPER_RIGHT_CONTEXT_WINDOW)
+        x2_context = min(image_w, x + 1)
+
+        context_region = support_mask[:, x1_context:x2_context]
+        context_ys, context_xs = np.where(context_region > 0)
+
+        has_context = len(context_ys) >= GAP_UPPER_RIGHT_MIN_CONTEXT_PIXELS
+
+        if has_context:
+            local_reference_y = float(np.median(context_ys))
+        else:
+            local_reference_y = None
+
+        # In imagini, y mai mic inseamna mai sus.
+        # Artefactul de la 44 este in dreapta, dar sare mult deasupra directiei locale.
+        is_much_above_local_direction = (
+            local_reference_y is not None
+            and component_median_y <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
+        )
+
+        if size_matches and is_right_of_principal and has_context and is_much_above_local_direction:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
 
 
 def filter_floating_right_gap_rescue(
@@ -938,6 +1039,17 @@ def process_image(index: int, current: int, total: int) -> None:
         gap_rescue_mask_raw,
         principal_after_horizontal_mask,
         secondary_mask_normal,
+    )
+
+    gap_rescue_mask, upper_right_gap_removed_mask = filter_upper_right_gap_rescue(
+        gap_rescue_mask,
+        principal_after_horizontal_mask,
+        secondary_mask_normal,
+    )
+
+    floating_gap_removed_mask = merge_masks(
+        floating_gap_removed_mask,
+        upper_right_gap_removed_mask,
     )
 
     secondary_mask_before_rescue = np.zeros_like(secondary_mask_normal, dtype=np.uint8)
