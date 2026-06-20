@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 RESCUE_COLOR = (255, 0, 255)
@@ -46,8 +45,6 @@ RESCUE_MAX_EDGE_DIST_FACTOR = 1.45
 RESCUE_ACCEPT_MIN_SCORE = 1.05
 RESCUE_MAX_COMPONENTS_PER_SIDE = 2
 
-# Guard anti-artefact sus pentru secondary_rescue.
-# Tintește cazuri ca poza 41: rescue-ul lateral din dreapta urcă spre structuri superficiale.
 RESCUE_UPPER_ARTIFACT_GUARD_ENABLE = True
 RESCUE_UPPER_ARTIFACT_MIN_GAP_PX = 8
 RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_MODEL_PX = 14
@@ -55,12 +52,10 @@ RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_CURRENT_PX = 14
 RESCUE_UPPER_ARTIFACT_MEDIAN_ABOVE_MODEL_PX = 12
 RESCUE_UPPER_ARTIFACT_P90_ABOVE_MODEL_PX = 18
 
-
 GUARD_ENABLE = True
 GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA = 2.75
 GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH = 1.45
 GUARD_KEEP_NEAR_HALF_HEIGHT_MULTIPLIER = 1.10
-
 
 
 def normalize_binary_mask(mask):
@@ -73,13 +68,11 @@ def normalize_binary_mask(mask):
     return (mask > 0).astype(np.uint8) * 255
 
 
-
 def to_bgr(image):
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
     return image.copy()
-
 
 
 def draw_points(image, points, color, radius=2):
@@ -103,7 +96,6 @@ def draw_points(image, points, color, radius=2):
     return result
 
 
-
 def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     result = to_bgr(base_image)
 
@@ -120,12 +112,11 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     result_float = result.astype(np.float32)
 
     result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
+            (1.0 - alpha) * result_float[mask_bool]
+            + alpha * color_array
     )
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
-
 
 
 def mask_bounds(mask):
@@ -144,7 +135,6 @@ def mask_bounds(mask):
         "height": int(np.max(ys) - np.min(ys) + 1),
         "area": int(len(xs)),
     }
-
 
 
 def mask_to_bottom_points(mask):
@@ -166,7 +156,6 @@ def mask_to_bottom_points(mask):
         return np.empty((0, 2), dtype=np.int32)
 
     return np.array(points, dtype=np.int32)
-
 
 
 def build_guidance_points(principal_mask, traveler_points):
@@ -212,7 +201,6 @@ def build_guidance_points(principal_mask, traveler_points):
     return np.array(result, dtype=np.int32)
 
 
-
 def edge_y_from_mask(mask, side):
     mask = normalize_binary_mask(mask)
     ys, xs = np.where(mask > 0)
@@ -231,7 +219,6 @@ def edge_y_from_mask(mask, side):
         return float(np.median(ys))
 
     return float(np.median(selected))
-
 
 
 def build_endpoint_predictor(guidance_points, current_mask, current_bounds, side, image_shape):
@@ -306,7 +293,6 @@ def build_endpoint_predictor(guidance_points, current_mask, current_bounds, side
     return predict, edge_x, anchor_y, slope
 
 
-
 def estimate_band_half_height(guidance_points, predict, edge_x, side, image_shape):
     height, width = image_shape[:2]
 
@@ -359,7 +345,6 @@ def estimate_band_half_height(guidance_points, predict, edge_x, side, image_shap
     half_height = min(max_half_height, half_height)
 
     return int(half_height)
-
 
 
 def build_side_roi(binary_top2, current_mask, guidance_points, side):
@@ -422,7 +407,6 @@ def build_side_roi(binary_top2, current_mask, guidance_points, side):
     return roi_mask, predict, half_height
 
 
-
 def component_stats(component_mask):
     component_mask = normalize_binary_mask(component_mask)
     ys, xs = np.where(component_mask > 0)
@@ -455,15 +439,13 @@ def component_stats(component_mask):
     }
 
 
-
-
 def is_rescue_candidate_too_high(
-    ys_float,
-    predicted,
-    candidate_edge_y,
-    expected_edge_y,
-    current_edge_y,
-    gap,
+        ys_float,
+        predicted,
+        candidate_edge_y,
+        expected_edge_y,
+        current_edge_y,
+        gap,
 ):
     if not RESCUE_UPPER_ARTIFACT_GUARD_ENABLE:
         return False
@@ -471,7 +453,6 @@ def is_rescue_candidate_too_high(
     if gap < RESCUE_UPPER_ARTIFACT_MIN_GAP_PX:
         return False
 
-    # In imagine, y mai mic inseamna mai sus.
     signed = ys_float - predicted
     above = np.maximum(0.0, -signed)
 
@@ -484,15 +465,11 @@ def is_rescue_candidate_too_high(
     median_above_model = median_signed < -RESCUE_UPPER_ARTIFACT_MEDIAN_ABOVE_MODEL_PX
     p90_above_model = p90_above > RESCUE_UPPER_ARTIFACT_P90_ABOVE_MODEL_PX
 
-    # Cazul 41:
-    # componenta este laterală, dar stă mult deasupra direcției estimate
-    # și deasupra capătului curent. O astfel de componentă nu continuă pleura.
     return bool(
         edge_above_model
         and edge_above_current
         and (median_above_model or p90_above_model)
     )
-
 
 
 def score_rescue_candidate(component_mask, current_mask, predict, half_height, image_shape, side):
@@ -516,8 +493,8 @@ def score_rescue_candidate(component_mask, current_mask, predict, half_height, i
         return None
 
     if (
-        stats["verticality"] > RESCUE_MAX_VERTICALITY
-        and stats["width"] < RESCUE_VERTICALITY_WIDTH_FRAC * width
+            stats["verticality"] > RESCUE_MAX_VERTICALITY
+            and stats["width"] < RESCUE_VERTICALITY_WIDTH_FRAC * width
     ):
         return None
 
@@ -575,12 +552,12 @@ def score_rescue_candidate(component_mask, current_mask, predict, half_height, i
     )
 
     if is_rescue_candidate_too_high(
-        ys_float=ys_float,
-        predicted=predicted,
-        candidate_edge_y=candidate_edge_y,
-        expected_edge_y=expected_edge_y,
-        current_edge_y=current_edge_y,
-        gap=gap,
+            ys_float=ys_float,
+            predicted=predicted,
+            candidate_edge_y=candidate_edge_y,
+            expected_edge_y=expected_edge_y,
+            current_edge_y=current_edge_y,
+            gap=gap,
     ):
         return None
 
@@ -612,7 +589,6 @@ def score_rescue_candidate(component_mask, current_mask, predict, half_height, i
         return None
 
     return float(score)
-
 
 
 def find_rescue_for_side(binary_top2, current_mask, guidance_points, side):
@@ -673,7 +649,6 @@ def find_rescue_for_side(binary_top2, current_mask, guidance_points, side):
     return accepted, accepted_mask, roi_mask, candidate_mask, rejected_mask
 
 
-
 def should_try_lateral_rescue(merged_mask):
     bounds = mask_bounds(merged_mask)
 
@@ -695,7 +670,6 @@ def should_try_lateral_rescue(merged_mask):
         return True
 
     return False
-
 
 
 def guard_overgrown_secondary(principal_mask, secondary_mask):
@@ -720,8 +694,8 @@ def guard_overgrown_secondary(principal_mask, secondary_mask):
     width_ratio = secondary_bounds["width"] / principal_width
 
     if (
-        area_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA
-        and width_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH
+            area_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA
+            and width_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH
     ):
         empty = np.zeros_like(principal_mask, dtype=np.uint8)
         return secondary_mask, empty, False
@@ -730,7 +704,6 @@ def guard_overgrown_secondary(principal_mask, secondary_mask):
     filtered_secondary = np.zeros_like(secondary_mask, dtype=np.uint8)
 
     return filtered_secondary, removed_mask, True
-
 
 
 def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, merged_mask, traveler_points):
@@ -819,17 +792,16 @@ def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, merged_m
     }
 
 
-
 def draw_rescue_debug(
-    base_image,
-    principal_mask,
-    secondary_mask,
-    rescue_mask,
-    removed_secondary_mask=None,
-    roi_mask=None,
-    candidate_mask=None,
-    rejected_mask=None,
-    traveler_points=None,
+        base_image,
+        principal_mask,
+        secondary_mask,
+        rescue_mask,
+        removed_secondary_mask=None,
+        roi_mask=None,
+        candidate_mask=None,
+        rejected_mask=None,
+        traveler_points=None,
 ):
     result = to_bgr(base_image)
 
@@ -853,7 +825,6 @@ def draw_rescue_debug(
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
 
     return result
-
 
 
 def draw_merged_after_rescue(base_image, merged_mask, traveler_points=None):

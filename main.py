@@ -11,15 +11,16 @@ from principal_sanity import repair_principal_if_upper_artifact
 from principal_selector import select_principal_by_lower_candidate
 from horizontal_rescue import horizontal_rescue_before_secondary
 from secondary_component import build_secondary_components
-from gap_rescue import (
-    draw_gap_merged_debug,
-    draw_gap_rescue_debug,
-    gap_rescue_after_secondary,
+from gap_rescue import gap_rescue_after_secondary
+from secondary_rescue import (
+    draw_merged_after_rescue,
+    draw_rescue_debug,
+    rescue_after_secondary,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/GAP_RESCUE_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/SECONDARY_RESCUE_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -91,15 +92,20 @@ def main():
             traveler_points,
         )
 
-        secondary_mask = secondary_result["secondary_mask"]
-        merged_before_gap = secondary_result["merged_mask"]
-
         gap_result = gap_rescue_after_secondary(
             binary_top2=binary_top2_guarded,
             principal_mask=principal_after_horizontal_mask,
-            secondary_mask=secondary_mask,
-            merged_mask=merged_before_gap,
+            secondary_mask=secondary_result["secondary_mask"],
+            merged_mask=secondary_result["merged_mask"],
             traveler_points=traveler_points,
+        )
+
+        rescue_result = rescue_after_secondary(
+            binary_top2_guarded,
+            principal_after_horizontal_mask,
+            gap_result["secondary_mask"],
+            gap_result["merged_mask"],
+            traveler_points,
         )
 
         stem = image_path.stem
@@ -115,65 +121,70 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "02_SECONDARY_MASK" / f"{stem}_secondary_mask.png",
-            secondary_mask,
+            OUTPUT_DIR / "02_SECONDARY_AFTER_GAP" / f"{stem}_secondary_after_gap.png",
+            gap_result["secondary_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_MERGED_BEFORE_GAP" / f"{stem}_merged_before_gap.png",
-            merged_before_gap,
-        )
-
-        save(
-            OUTPUT_DIR / "04_GAP_ROI" / f"{stem}_gap_roi.png",
-            gap_result["roi_mask"],
-        )
-
-        save(
-            OUTPUT_DIR / "05_GAP_CANDIDATE" / f"{stem}_gap_candidate.png",
-            gap_result["candidate_mask"],
-        )
-
-        save(
-            OUTPUT_DIR / "06_GAP_ACCEPTED" / f"{stem}_gap_accepted.png",
-            gap_result["accepted_mask"],
-        )
-
-        save(
-            OUTPUT_DIR / "07_GAP_REJECTED" / f"{stem}_gap_rejected.png",
-            gap_result["rejected_mask"],
-        )
-
-        save(
-            OUTPUT_DIR / "08_GAP_RESCUE" / f"{stem}_gap_rescue.png",
-            gap_result["rescue_mask"],
-        )
-
-        save(
-            OUTPUT_DIR / "09_MERGED_AFTER_GAP" / f"{stem}_merged_after_gap.png",
+            OUTPUT_DIR / "03_MERGED_BEFORE_RESCUE" / f"{stem}_merged_before_rescue.png",
             gap_result["merged_mask"],
         )
 
         save(
-            OUTPUT_DIR / "10_GAP_DEBUG" / f"{stem}_gap_debug.png",
-            draw_gap_rescue_debug(
+            OUTPUT_DIR / "04_RESCUE_ROI" / f"{stem}_rescue_roi.png",
+            rescue_result["roi_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "05_RESCUE_CANDIDATE" / f"{stem}_rescue_candidate.png",
+            rescue_result["candidate_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "06_RESCUE_ACCEPTED" / f"{stem}_rescue_accepted.png",
+            rescue_result["accepted_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "07_RESCUE_REJECTED" / f"{stem}_rescue_rejected.png",
+            rescue_result["rejected_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "08_REMOVED_SECONDARY" / f"{stem}_removed_secondary.png",
+            rescue_result["removed_secondary_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "09_RESCUE_MASK" / f"{stem}_rescue_mask.png",
+            rescue_result["rescue_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "10_MERGED_AFTER_RESCUE" / f"{stem}_merged_after_rescue.png",
+            rescue_result["merged_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "11_RESCUE_DEBUG" / f"{stem}_rescue_debug.png",
+            draw_rescue_debug(
                 crop,
                 principal_after_horizontal_mask,
-                secondary_mask,
-                gap_result["rescue_mask"],
-                gap_result["roi_mask"],
-                gap_result["candidate_mask"],
-                gap_result["accepted_mask"],
-                gap_result["rejected_mask"],
+                rescue_result["secondary_mask"],
+                rescue_result["rescue_mask"],
+                removed_secondary_mask=rescue_result["removed_secondary_mask"],
+                roi_mask=rescue_result["roi_mask"],
+                candidate_mask=rescue_result["candidate_mask"],
+                rejected_mask=rescue_result["rejected_mask"],
                 traveler_points=traveler_points,
             ),
         )
 
         save(
-            OUTPUT_DIR / "11_GAP_MERGED_DEBUG" / f"{stem}_gap_merged_debug.png",
-            draw_gap_merged_debug(
+            OUTPUT_DIR / "12_MERGED_DEBUG" / f"{stem}_merged_debug.png",
+            draw_merged_after_rescue(
                 crop,
-                gap_result["merged_mask"],
+                rescue_result["merged_mask"],
                 traveler_points=traveler_points,
             ),
         )
