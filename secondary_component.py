@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 MERGED_COLOR = (0, 255, 0)
@@ -38,8 +37,6 @@ SECONDARY_ACCEPT_MIN_SCORE = 1.00
 
 SECONDARY_UPPER_ARTIFACT_GUARD_ENABLE = True
 
-# Guard pentru fragmente secundare laterale care sunt prea sus fata de directia pleurei.
-# Nu este filtru final: candidatul este respins in momentul identificarii secundare.
 SECONDARY_UPPER_ARTIFACT_MEDIAN_FACTOR = 0.18
 SECONDARY_UPPER_ARTIFACT_P90_FACTOR = 0.25
 SECONDARY_UPPER_ARTIFACT_EDGE_FACTOR = 0.22
@@ -48,8 +45,6 @@ SECONDARY_UPPER_ARTIFACT_MIN_MEDIAN_PX = 5
 SECONDARY_UPPER_ARTIFACT_MIN_P90_PX = 8
 SECONDARY_UPPER_ARTIFACT_MIN_EDGE_PX = 7
 
-# Aplicam regula doar pe componente suficient de izolate lateral.
-# Daca gap-ul este aproape zero, e mai probabil sa fie continuare reala lipita de pleura.
 SECONDARY_UPPER_ARTIFACT_MIN_GAP_PX = 5
 
 MODEL_DEGREE_2_MIN_WIDTH_FRAC = 0.22
@@ -107,8 +102,8 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     result_float = result.astype(np.float32)
 
     result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
+            (1.0 - alpha) * result_float[mask_bool]
+            + alpha * color_array
     )
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
@@ -173,8 +168,8 @@ def fit_secondary_model(points, image_shape):
     point_width = max(1, max_x - min_x + 1)
 
     if (
-        len(points) >= MODEL_DEGREE_2_MIN_POINTS
-        and point_width >= MODEL_DEGREE_2_MIN_WIDTH_FRAC * width
+            len(points) >= MODEL_DEGREE_2_MIN_POINTS
+            and point_width >= MODEL_DEGREE_2_MIN_WIDTH_FRAC * width
     ):
         degree = 2
     elif len(points) >= 2:
@@ -352,15 +347,14 @@ def edge_y_from_mask(mask, side):
     return float(np.median(selected))
 
 
-
 def is_secondary_candidate_too_high(
-    ys_float,
-    predicted,
-    candidate_edge_y,
-    expected_edge_y,
-    current_edge_y,
-    half_height,
-    gap,
+        ys_float,
+        predicted,
+        candidate_edge_y,
+        expected_edge_y,
+        current_edge_y,
+        half_height,
+        gap,
 ):
     if not SECONDARY_UPPER_ARTIFACT_GUARD_ENABLE:
         return False
@@ -370,8 +364,6 @@ def is_secondary_candidate_too_high(
 
     signed_distances = ys_float - predicted
 
-    # In coordonate imagine, y mai mic inseamna mai sus.
-    # above_values masoara cat de mult este candidatul deasupra modelului.
     above_values = np.maximum(0.0, -signed_distances)
 
     median_signed = float(np.median(signed_distances))
@@ -393,30 +385,25 @@ def is_secondary_candidate_too_high(
     )
 
     clearly_above_model = (
-        median_signed < -median_limit
-        and p90_above > p90_limit
+            median_signed < -median_limit
+            and p90_above > p90_limit
     )
 
-    # Cazul vazut la poza 18:
-    # fragmentul este lateral, iar marginea lui este mai sus decat:
-    #   1) y-ul asteptat de model;
-    #   2) y-ul capatului curent al pleurei.
-    # Asta inseamna ca urca spre structuri superficiale, nu continua pleura.
     edge_too_high = (
-        candidate_edge_y < expected_edge_y - edge_limit
-        and candidate_edge_y < current_edge_y - edge_limit
+            candidate_edge_y < expected_edge_y - edge_limit
+            and candidate_edge_y < current_edge_y - edge_limit
     )
 
     return bool(clearly_above_model and edge_too_high)
 
 
 def score_secondary_candidate(
-    component_mask,
-    current_mask,
-    predict,
-    half_height,
-    image_shape,
-    side,
+        component_mask,
+        current_mask,
+        predict,
+        half_height,
+        image_shape,
+        side,
 ):
     _, width = image_shape[:2]
 
@@ -438,8 +425,8 @@ def score_secondary_candidate(
         return None
 
     if (
-        stats["verticality"] > SECONDARY_MAX_VERTICALITY
-        and stats["width"] < SECONDARY_VERTICALITY_WIDTH_FRAC * width
+            stats["verticality"] > SECONDARY_MAX_VERTICALITY
+            and stats["width"] < SECONDARY_VERTICALITY_WIDTH_FRAC * width
     ):
         return None
 
@@ -487,13 +474,13 @@ def score_secondary_candidate(
     )
 
     if is_secondary_candidate_too_high(
-        ys_float=ys_float,
-        predicted=predicted,
-        candidate_edge_y=candidate_edge_y,
-        expected_edge_y=expected_edge_y,
-        current_edge_y=current_edge_y,
-        half_height=half_height,
-        gap=gap,
+            ys_float=ys_float,
+            predicted=predicted,
+            candidate_edge_y=candidate_edge_y,
+            expected_edge_y=expected_edge_y,
+            current_edge_y=current_edge_y,
+            half_height=half_height,
+            gap=gap,
     ):
         return None
 
@@ -527,10 +514,10 @@ def score_secondary_candidate(
 
 
 def find_secondary_components_for_side(
-    search_binary_mask,
-    current_mask,
-    current_points,
-    side,
+        search_binary_mask,
+        current_mask,
+        current_points,
+        side,
 ):
     search_binary = normalize_binary_mask(search_binary_mask)
     current_mask = normalize_binary_mask(current_mask)
@@ -694,10 +681,10 @@ def draw_secondary_roi(base_image, roi_mask, principal_mask=None, traveler_point
 
 
 def draw_secondary_candidates(
-    base_image,
-    candidate_mask,
-    rejected_mask=None,
-    traveler_points=None,
+        base_image,
+        candidate_mask,
+        rejected_mask=None,
+        traveler_points=None,
 ):
     result = draw_mask_overlay(base_image, candidate_mask, CANDIDATE_COLOR, alpha=0.55)
 
@@ -711,10 +698,10 @@ def draw_secondary_candidates(
 
 
 def draw_secondary_components(
-    base_image,
-    principal_mask,
-    secondary_mask,
-    traveler_points=None,
+        base_image,
+        principal_mask,
+        secondary_mask,
+        traveler_points=None,
 ):
     result = to_bgr(base_image)
 

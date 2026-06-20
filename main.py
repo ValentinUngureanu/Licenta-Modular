@@ -7,16 +7,20 @@ from crop import crop_ultrasound
 from preprocessing import preprocess_crop
 from traveler import build_traveler
 from principal_component import build_principal_component
+from principal_sanity import repair_principal_if_upper_artifact
 from principal_selector import select_principal_by_lower_candidate
-from horizontal_rescue import (
-    draw_horizontal_merged_debug,
-    draw_horizontal_rescue_debug,
-    horizontal_rescue_before_secondary,
+from horizontal_rescue import horizontal_rescue_before_secondary
+from secondary_component import (
+    build_secondary_components,
+    draw_merged_components,
+    draw_secondary_candidates,
+    draw_secondary_components,
+    draw_secondary_roi,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/HORIZONTAL_RESCUE_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/SECONDARY_COMPONENT_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -60,9 +64,14 @@ def main():
             traveler_points,
         )
 
-        selector_result = select_principal_by_lower_candidate(
+        sanity_result = repair_principal_if_upper_artifact(
             binary_top2,
             principal_result["principal_mask"],
+        )
+
+        selector_result = select_principal_by_lower_candidate(
+            binary_top2,
+            sanity_result["principal_mask"],
         )
 
         principal_mask = selector_result["principal_mask"]
@@ -73,6 +82,16 @@ def main():
             traveler_points=traveler_points,
         )
 
+        principal_after_horizontal_mask = horizontal_result["merged_mask"]
+        binary_top2_guarded = horizontal_result["binary_top2_guarded"]
+
+        secondary_result = build_secondary_components(
+            binary_top1,
+            binary_top2_guarded,
+            principal_after_horizontal_mask,
+            traveler_points,
+        )
+
         stem = image_path.stem
 
         save(
@@ -81,60 +100,76 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "01_PRINCIPAL_MASK" / f"{stem}_principal_mask.png",
-            principal_mask,
+            OUTPUT_DIR / "01_PRINCIPAL_AFTER_HORIZONTAL" / f"{stem}_principal_after_horizontal.png",
+            principal_after_horizontal_mask,
         )
 
         save(
-            OUTPUT_DIR / "02_HORIZONTAL_ROI" / f"{stem}_horizontal_roi.png",
-            horizontal_result["roi_mask"],
+            OUTPUT_DIR / "02_SECONDARY_ROI" / f"{stem}_secondary_roi.png",
+            secondary_result["roi_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_HORIZONTAL_CANDIDATE" / f"{stem}_horizontal_candidate.png",
-            horizontal_result["candidate_mask"],
+            OUTPUT_DIR / "03_SECONDARY_CANDIDATE" / f"{stem}_secondary_candidate.png",
+            secondary_result["candidate_mask"],
         )
 
         save(
-            OUTPUT_DIR / "04_HORIZONTAL_ACCEPTED" / f"{stem}_horizontal_accepted.png",
-            horizontal_result["accepted_mask"],
+            OUTPUT_DIR / "04_SECONDARY_ACCEPTED" / f"{stem}_secondary_accepted.png",
+            secondary_result["accepted_mask"],
         )
 
         save(
-            OUTPUT_DIR / "05_HORIZONTAL_REJECTED" / f"{stem}_horizontal_rejected.png",
-            horizontal_result["rejected_mask"],
+            OUTPUT_DIR / "05_SECONDARY_REJECTED" / f"{stem}_secondary_rejected.png",
+            secondary_result["rejected_mask"],
         )
 
         save(
-            OUTPUT_DIR / "06_HORIZONTAL_RESCUE" / f"{stem}_horizontal_rescue.png",
-            horizontal_result["rescue_mask"],
+            OUTPUT_DIR / "06_SECONDARY_MASK" / f"{stem}_secondary_mask.png",
+            secondary_result["secondary_mask"],
         )
 
         save(
             OUTPUT_DIR / "07_MERGED_MASK" / f"{stem}_merged_mask.png",
-            horizontal_result["merged_mask"],
+            secondary_result["merged_mask"],
         )
 
         save(
-            OUTPUT_DIR / "08_HORIZONTAL_DEBUG" / f"{stem}_horizontal_debug.png",
-            draw_horizontal_rescue_debug(
+            OUTPUT_DIR / "08_SECONDARY_ROI_DEBUG" / f"{stem}_secondary_roi_debug.png",
+            draw_secondary_roi(
                 crop,
-                principal_mask,
-                horizontal_result["rescue_mask"],
-                horizontal_result["roi_mask"],
-                horizontal_result["candidate_mask"],
-                horizontal_result["accepted_mask"],
-                horizontal_result["rejected_mask"],
-                traveler_points=traveler_points,
+                secondary_result["roi_mask"],
+                principal_after_horizontal_mask,
+                traveler_points,
             ),
         )
 
         save(
-            OUTPUT_DIR / "09_MERGED_DEBUG" / f"{stem}_merged_debug.png",
-            draw_horizontal_merged_debug(
+            OUTPUT_DIR / "09_SECONDARY_CANDIDATES_DEBUG" / f"{stem}_secondary_candidates_debug.png",
+            draw_secondary_candidates(
                 crop,
-                horizontal_result["merged_mask"],
-                traveler_points=traveler_points,
+                secondary_result["candidate_mask"],
+                secondary_result["rejected_mask"],
+                traveler_points,
+            ),
+        )
+
+        save(
+            OUTPUT_DIR / "10_SECONDARY_COMPONENTS_DEBUG" / f"{stem}_secondary_components_debug.png",
+            draw_secondary_components(
+                crop,
+                principal_after_horizontal_mask,
+                secondary_result["secondary_mask"],
+                traveler_points,
+            ),
+        )
+
+        save(
+            OUTPUT_DIR / "11_MERGED_DEBUG" / f"{stem}_merged_debug.png",
+            draw_merged_components(
+                crop,
+                secondary_result["merged_mask"],
+                traveler_points,
             ),
         )
 
