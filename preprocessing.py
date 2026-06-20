@@ -48,9 +48,7 @@ def reduce_palette_7_percentile_linear(gray, colors=7):
     quantized = np.floor(normalized * colors)
     quantized[quantized >= colors] = colors - 1
 
-    result = (quantized / (colors - 1) * 255).astype(np.uint8)
-
-    return result
+    return (quantized / (colors - 1) * 255).astype(np.uint8)
 
 
 def reduce_palette_7_clahe_kmeans(gray, colors=7):
@@ -58,7 +56,6 @@ def reduce_palette_7_clahe_kmeans(gray, colors=7):
         gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
 
     gray = gray.astype(np.uint8)
-
     tile_size = max(2, int(PALETTE_CLAHE_TILE_SIZE))
 
     clahe = cv2.createCLAHE(
@@ -124,7 +121,6 @@ def binarize_palette_7(palette_gray, keep_top_levels):
         palette_gray = cv2.cvtColor(palette_gray, cv2.COLOR_BGR2GRAY)
 
     palette_gray = palette_gray.astype(np.uint8)
-
     values = np.sort(np.unique(palette_gray))
 
     if len(values) < 2:
@@ -132,7 +128,6 @@ def binarize_palette_7(palette_gray, keep_top_levels):
         return binary, 0
 
     keep_top_levels = max(1, min(int(keep_top_levels), len(values)))
-
     threshold = int(values[-keep_top_levels])
 
     binary = (palette_gray >= threshold).astype(np.uint8) * 255
