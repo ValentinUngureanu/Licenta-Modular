@@ -1,28 +1,13 @@
 import cv2
 import numpy as np
 
-
-# ============================================================
-# PRINCIPAL SELECTOR - GUARD ALGORITMIC PENTRU CAZURI CA 52
-# ============================================================
-# Rol:
-#   - ruleaza DUPA build_principal_component;
-#   - verifica daca principalul ales este un strat superficial prea sus;
-#   - daca da, cauta in binary_top2 un complex pleural oblic mai profund;
-#   - NU face hardcodare dupa indexul imaginii;
-#   - returneaza principalul initial sau un principal alternativ format din:
-#       marginea superioara a complexului + fragmente apropiate de acea margine.
-# ============================================================
-
 PRINCIPAL_SELECTOR_ENABLE = True
 
-# Principal suspect: prea sus + suficient de gros/mare.
 SUSPECT_MAX_MEDIAN_Y_FRAC = 0.22
 SUSPECT_MIN_HEIGHT_PX = 65
 SUSPECT_MIN_AREA = 2500
 SUSPECT_MIN_WIDTH_PX = 260
 
-# Cautare alternativa mai jos.
 LOWER_START_EXTRA_Y = 18
 LOWER_START_MIN_FRAC = 0.24
 LOWER_END_FRAC = 0.58
@@ -30,7 +15,6 @@ MIN_MEDIAN_DELTA_Y = 70
 MAX_ALTERNATIVE_MEDIAN_Y_FRAC = 0.46
 MIN_ALTERNATIVE_MEDIAN_Y_FRAC = 0.24
 
-# Filtre pentru componenta candidata.
 MAX_CANDIDATES = 6
 MIN_CANDIDATE_WIDTH = 220
 MIN_CANDIDATE_AREA = 700
@@ -38,19 +22,14 @@ MAX_CANDIDATE_HEIGHT_FRAC = 0.28
 MIN_X_TOUCH_OR_OVERLAP_PX = 45
 MAX_START_GAP_FROM_CURRENT_PX = 120
 
-# Grupare fragmente orizontale/oblice din top2.
 CLOSE_KERNEL_W = 55
 CLOSE_KERNEL_H = 5
 REGION_DILATE_W = 17
 REGION_DILATE_H = 9
 
-# Varianta subtire: marginea superioara a componentei.
 TOP_BAND_ABOVE = 2
 TOP_BAND_BELOW = 8
 
-# Varianta noua: complex pleural controlat.
-# Păstrăm linia superioară + fragmente imediat sub ea, dar limităm coborârea
-# ca să nu includem toată pata/artifactul profund.
 COMPLEX_BAND_ABOVE = 3
 COMPLEX_BAND_BELOW = 165
 COMPLEX_X_EXTENSION = 52
@@ -62,19 +41,9 @@ COMPLEX_MAX_FRAGMENT_MEDIAN_BELOW = 160
 COMPLEX_MAX_FRAGMENT_GAP_X = 115
 COMPLEX_MIN_SELECTED_AREA_FACTOR = 0.04
 
-# Curatare.
 CLEAN_CLOSE_W = 9
 CLEAN_CLOSE_H = 3
 MIN_SMALL_COMPONENT_AREA = 10
-
-COLORS = [
-    (0, 255, 0),
-    (0, 255, 255),
-    (255, 0, 255),
-    (255, 128, 0),
-    (0, 128, 255),
-    (255, 255, 0),
-]
 
 
 def normalize_mask(mask):
@@ -190,10 +159,10 @@ def is_current_principal_suspect(principal_mask):
     height = principal_mask.shape[0]
 
     return (
-        median_y <= SUSPECT_MAX_MEDIAN_Y_FRAC * height
-        and bounds["height"] >= SUSPECT_MIN_HEIGHT_PX
-        and bounds["area"] >= SUSPECT_MIN_AREA
-        and bounds["width"] >= SUSPECT_MIN_WIDTH_PX
+            median_y <= SUSPECT_MAX_MEDIAN_Y_FRAC * height
+            and bounds["height"] >= SUSPECT_MIN_HEIGHT_PX
+            and bounds["area"] >= SUSPECT_MIN_AREA
+            and bounds["width"] >= SUSPECT_MIN_WIDTH_PX
     )
 
 
@@ -336,21 +305,6 @@ def horizontal_gap_between(bounds_a, bounds_b):
 
 
 def build_controlled_pleura_complex(anchor_mask, search_mask):
-    """
-    Porneste de la componenta profunda candidata si construieste un principal pleural
-    ca un COMPLEX, nu doar ca o linie subtire.
-
-    Pentru cazul 52, pleura corecta este o zona oblica formata din:
-      - marginea superioara luminoasa;
-      - fragmentele imediat de sub aceasta margine;
-      - fara stratul superficial urias de sus.
-
-    De aceea:
-      1. estimam linia oblica de sus a ancorei;
-      2. construim o banda oblica mai groasa sub acea linie;
-      3. pastram top2 din banda, dar numai fragmentele legate geometric
-         de ancora, ca sa nu luam artefacte indepartate.
-    """
     anchor_mask = normalize_mask(anchor_mask)
     search_mask = normalize_mask(search_mask)
     empty = empty_mask_like(anchor_mask)
@@ -375,8 +329,6 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
             "complex_roi_mask": selected.copy(),
         }
 
-    # ROI oblic: mai gros sub linia pleurala, fiindca la 52 pleura este un complex,
-    # nu doar o margine subtire.
     complex_roi = build_oblique_band_roi_from_line(anchor_mask.shape, line, anchor_bounds)
     complex_search = cv2.bitwise_and(search_mask, complex_roi)
 
@@ -396,7 +348,6 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
         linked_component = np.zeros_like(anchor_mask, dtype=np.uint8)
         linked_component[labels == label] = 255
 
-        # Revenim la pixelii reali din top2, nu la componenta inchisa morfologic.
         component = cv2.bitwise_and(complex_search, cv2.dilate(linked_component, None, iterations=1))
         component = remove_tiny_components(component, COMPLEX_MIN_FRAGMENT_AREA)
 
@@ -412,11 +363,9 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
 
         median_below = median_distance_to_line(component, line)
 
-        # Respinge bucati aflate clar deasupra liniei estimate.
         if median_below < -COMPLEX_BAND_ABOVE - 5:
             continue
 
-        # Respinge coborari foarte profunde in artefact.
         if median_below > COMPLEX_MAX_FRAGMENT_MEDIAN_BELOW:
             continue
 
@@ -424,7 +373,6 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
         if gap_x > COMPLEX_MAX_FRAGMENT_GAP_X:
             continue
 
-        # Componenta trebuie sa fie legata de ancora: overlap pe X sau apropiere laterala.
         overlap_x = min(bounds["max_x"], anchor_bounds["max_x"]) - max(bounds["min_x"], anchor_bounds["min_x"]) + 1
         overlap_x = max(0, overlap_x)
         if overlap_x < 8 and gap_x > 42:
@@ -443,11 +391,6 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
             }
         )
 
-    # Fallback controlat:
-    # Daca bucla de mai sus nu accepta fragmente suficiente, nu revenim la o linie subtire.
-    # Pentru cazuri ca 52, complexul pleural este format din mai multe fragmente top2
-    # aflate in banda oblica de sub marginea superioara. Le pastram pe cele apropiate
-    # geometric de ancora, fara sa luam stratul superficial de sus.
     if mask_area(selected) < 0.28 * max(mask_area(anchor_mask), 1):
         fallback = np.zeros_like(anchor_mask, dtype=np.uint8)
         fallback_pixels = remove_tiny_components(complex_search, COMPLEX_MIN_FRAGMENT_AREA)
@@ -477,7 +420,8 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
             if fb_gap_x > COMPLEX_MAX_FRAGMENT_GAP_X:
                 continue
 
-            fb_overlap_x = min(fb_bounds["max_x"], anchor_bounds["max_x"]) - max(fb_bounds["min_x"], anchor_bounds["min_x"]) + 1
+            fb_overlap_x = min(fb_bounds["max_x"], anchor_bounds["max_x"]) - max(fb_bounds["min_x"],
+                                                                                 anchor_bounds["min_x"]) + 1
             fb_overlap_x = max(0, fb_overlap_x)
 
             if fb_overlap_x < 6 and fb_gap_x > 42:
@@ -487,10 +431,8 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
 
         selected = merge_masks(selected, fallback)
 
-    # Garanteaza ca marginea superioara a ancorei ramane inclusa.
     selected = merge_masks(selected, band_by_top_edge(anchor_mask))
 
-    # Curata usor, dar nu inchide agresiv vertical; vrem sa pastram fragmentele reale.
     selected = remove_tiny_components(selected, MIN_SMALL_COMPONENT_AREA)
 
     return {
@@ -500,12 +442,11 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
         "complex_roi_mask": complex_roi,
     }
 
+
 def candidate_touch_score(bounds, current_bounds):
     if bounds is None or current_bounds is None:
         return 0.0
 
-    # Preferam componente care continua zona curenta spre dreapta sau au contact
-    # in apropierea capatului principalului.
     horizontal_gap = bounds["min_x"] - current_bounds["max_x"]
 
     if horizontal_gap <= 0:
@@ -552,8 +493,6 @@ def score_candidate(component_original, linked_component, principal_mask):
     if touch < -MAX_START_GAP_FROM_CURRENT_PX:
         return None
 
-    # Daca nu are macar un contact/overlap minim cu capatul principalului,
-    # penalizam puternic, ca sa evitam insule izolate.
     missing_touch_penalty = 0.0
     if touch < MIN_X_TOUCH_OR_OVERLAP_PX:
         missing_touch_penalty = abs(touch - MIN_X_TOUCH_OR_OVERLAP_PX)
@@ -566,16 +505,16 @@ def score_candidate(component_original, linked_component, principal_mask):
     y_penalty = abs(candidate_median_y - target_y)
 
     score = (
-        3.5 * bounds["width"]
-        + 1.15 * bounds["area"]
-        + 30.0 * thinness
-        + 160.0 * density
-        + 0.8 * max(touch, 0.0)
-        - 1.6 * linked_bounds["height"]
-        - 28.0 * abs(slope)
-        - 2.0 * residual
-        - 0.45 * y_penalty
-        - 3.0 * missing_touch_penalty
+            3.5 * bounds["width"]
+            + 1.15 * bounds["area"]
+            + 30.0 * thinness
+            + 160.0 * density
+            + 0.8 * max(touch, 0.0)
+            - 1.6 * linked_bounds["height"]
+            - 28.0 * abs(slope)
+            - 2.0 * residual
+            - 0.45 * y_penalty
+            - 3.0 * missing_touch_penalty
     )
 
     return float(score)

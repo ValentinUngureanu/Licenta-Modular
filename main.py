@@ -7,14 +7,14 @@ from crop import crop_ultrasound
 from preprocessing import preprocess_crop
 from traveler import build_traveler
 from principal_component import build_principal_component
-from principal_sanity import (
-    draw_principal_sanity_debug,
-    repair_principal_if_upper_artifact,
+from principal_selector import (
+    draw_principal_selector_debug,
+    select_principal_by_lower_candidate,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/PRINCIPAL_SANITY_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/PRINCIPAL_SELECTOR_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -60,12 +60,12 @@ def main():
 
         original_principal_mask = principal_result["principal_mask"]
 
-        sanity_result = repair_principal_if_upper_artifact(
+        selector_result = select_principal_by_lower_candidate(
             binary_top2,
             original_principal_mask,
         )
 
-        repaired_principal_mask = sanity_result["principal_mask"]
+        selected_principal_mask = selector_result["principal_mask"]
         stem = image_path.stem
 
         save(
@@ -79,34 +79,37 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "02_SANITY_ROI" / f"{stem}_sanity_roi.png",
-            sanity_result["roi_mask"],
+            OUTPUT_DIR / "02_SELECTOR_ROI" / f"{stem}_selector_roi.png",
+            selector_result["roi_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_SANITY_CANDIDATE" / f"{stem}_sanity_candidate.png",
-            sanity_result["candidate_mask"],
+            OUTPUT_DIR / "03_SELECTOR_SEARCH" / f"{stem}_selector_search.png",
+            selector_result["search_mask"],
         )
 
         save(
-            OUTPUT_DIR / "04_SANITY_REPLACEMENT" / f"{stem}_sanity_replacement.png",
-            sanity_result["replacement_mask"],
+            OUTPUT_DIR / "04_SELECTOR_CANDIDATE" / f"{stem}_selector_candidate.png",
+            selector_result["candidate_mask"],
         )
 
         save(
-            OUTPUT_DIR / "05_REPAIRED_PRINCIPAL" / f"{stem}_repaired_principal.png",
-            repaired_principal_mask,
+            OUTPUT_DIR / "05_SELECTOR_SELECTED" / f"{stem}_selector_selected.png",
+            selector_result["selected_mask"],
         )
 
         save(
-            OUTPUT_DIR / "06_SANITY_DEBUG" / f"{stem}_sanity_debug.png",
-            draw_principal_sanity_debug(
+            OUTPUT_DIR / "06_FINAL_PRINCIPAL" / f"{stem}_final_principal.png",
+            selected_principal_mask,
+        )
+
+        save(
+            OUTPUT_DIR / "07_SELECTOR_DEBUG" / f"{stem}_selector_debug.png",
+            draw_principal_selector_debug(
                 crop,
                 original_principal_mask,
-                repaired_principal_mask,
-                sanity_result["roi_mask"],
-                sanity_result["candidate_mask"],
-                sanity_result["rejected_mask"],
+                selector_result,
+                traveler_points,
             ),
         )
 
