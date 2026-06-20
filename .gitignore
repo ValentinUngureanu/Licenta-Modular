@@ -1,0 +1,13 @@
+﻿.venv/
+__pycache__/
+*.pyc
+
+RESULTS/
+DEBUG_RESULTS/
+CROP_RESULTS/
+
+.idea/
+.vscode/
+
+*.zip
+ORIGINAL_IMAGES/
