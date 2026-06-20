@@ -1,7 +1,8 @@
-# MAIN TEST ONLY IMAGE 41 - SECONDARY RESCUE UPPER GUARD 1
-# Ruleaza exclusiv poza 41.
-# Testeaza secondary_rescue1.py.
-# Pastreaza fixurile anterioare: secondary_component pentru 18 si gap_rescue left_guard_only pentru 37/39/40.
+# MAIN ALL IMAGES - FIX POZA 46 GAP FLOATING RIGHT 2
+# Ruleaza toate pozele gasite in ORIGINAL_IMAGES.
+# Salveaza rezultatele normale pentru toate pozele.
+# Salveaza debug detaliat separat pentru poza 46.
+# Fix testat: elimina componenta gap_rescue izolata in dreapta, fara suport local pe aceeasi banda.
 import shutil
 import re
 import cv2
@@ -89,8 +90,8 @@ FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_LEFT_GUARD_ONLY.jpg"
 
-FOCUS_DEBUG_INDICES = {41}
-FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_41_SECONDARY_RESCUE1"
+FOCUS_DEBUG_INDICES = {46}
+FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_46_GAP_FLOATING_GUARD2"
 
 
 SMALL_COMPONENT_CLEAN_ENABLE = True
@@ -410,6 +411,177 @@ def should_accept_secondary_rescue(
                 return False
 
     return True
+
+
+
+RIGHT_ISOLATED_SECONDARY_RESCUE_GUARD_ENABLE = True
+RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX = 60
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA = 650
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH = 130
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT = 80
+RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX = 45
+
+
+def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
+    if not RIGHT_ISOLATED_SECONDARY_RESCUE_GUARD_ENABLE:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    if rescue_mask is None or base_mask is None:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    if mask_area(rescue_mask) == 0 or mask_area(base_mask) == 0:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    base_bounds = get_mask_bounds(base_mask)
+    base_median_y = mask_median_y(base_mask)
+
+    if base_bounds is None or base_median_y is None:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(rescue_mask, dtype=np.uint8)
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        x2 = x + width - 1
+        component_median_y = float(centroids[label][1])
+        component_pixels = labels == label
+
+        right_gap = x - base_bounds["max_x"] - 1
+
+        is_right_isolated = right_gap >= RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX
+
+        is_small_enough = (
+            area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
+            and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
+            and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
+        )
+
+        # y mai mare = mai jos in imagine.
+        # La poza 46 artefactul este o insula in dreapta jos, departe de masca deja acceptata.
+        is_much_lower = (
+            component_median_y >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
+        )
+
+        if is_right_isolated and is_small_enough and is_much_lower:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
+
+
+
+GAP_FLOATING_RIGHT_GUARD_ENABLE = True
+GAP_FLOATING_RIGHT_MIN_AREA = 250
+GAP_FLOATING_RIGHT_MAX_AREA = 1200
+GAP_FLOATING_RIGHT_MIN_WIDTH = 35
+GAP_FLOATING_RIGHT_MAX_WIDTH = 140
+GAP_FLOATING_RIGHT_MAX_HEIGHT = 55
+GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL = 18
+GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW = 90
+GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND = 35
+GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS = 8
+
+
+def filter_floating_right_gap_rescue(
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
+):
+    if not GAP_FLOATING_RIGHT_GUARD_ENABLE:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if gap_rescue_mask is None or principal_after_horizontal_mask is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
+
+    if principal_bounds is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    support_mask = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    support_mask[principal_after_horizontal_mask > 0] = 255
+
+    if secondary_mask_normal is not None:
+        support_mask[secondary_mask_normal > 0] = 255
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (gap_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+
+    height_img, width_img = gap_rescue_mask.shape[:2]
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        x2 = x + width - 1
+        y2 = y + height - 1
+        component_median_y = float(centroids[label][1])
+        component_pixels = labels == label
+
+        right_gap_from_principal = x - principal_bounds["max_x"] - 1
+
+        size_matches = (
+            area >= GAP_FLOATING_RIGHT_MIN_AREA
+            and area <= GAP_FLOATING_RIGHT_MAX_AREA
+            and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
+            and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
+            and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
+        )
+
+        is_right_of_principal = (
+            right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+        )
+
+        y1_support = max(0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND)
+        y2_support = min(height_img, int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1)
+        x1_support = max(0, x - GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW)
+        x2_support = max(0, x)
+
+        left_support_pixels = 0
+
+        if x2_support > x1_support and y2_support > y1_support:
+            left_support_pixels = int(
+                np.count_nonzero(support_mask[y1_support:y2_support, x1_support:x2_support] > 0)
+            )
+
+        lacks_local_left_support = (
+            left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
+        )
+
+        # Pentru poza 46 bucata incercuita este introdusa de gap_rescue:
+        # este in dreapta componentei principale, are dimensiune medie,
+        # dar nu are niciun suport local in stanga pe aceeasi banda y.
+        if size_matches and is_right_of_principal and lacks_local_left_support:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
 
 
 def run_guarded_secondary_rescue(
@@ -760,13 +932,32 @@ def process_image(index: int, current: int, total: int) -> None:
         traveler_points=extended_points,
     )
 
-    gap_rescue_mask = gap_rescue_result["rescue_mask"]
-    secondary_mask_before_rescue = gap_rescue_result["secondary_mask"]
-    merged_before_secondary_rescue = gap_rescue_result["merged_mask"]
+    gap_rescue_mask_raw = gap_rescue_result["rescue_mask"]
+
+    gap_rescue_mask, floating_gap_removed_mask = filter_floating_right_gap_rescue(
+        gap_rescue_mask_raw,
+        principal_after_horizontal_mask,
+        secondary_mask_normal,
+    )
+
+    secondary_mask_before_rescue = np.zeros_like(secondary_mask_normal, dtype=np.uint8)
+    secondary_mask_before_rescue[secondary_mask_normal > 0] = 255
+    secondary_mask_before_rescue[gap_rescue_mask > 0] = 255
+
+    merged_before_secondary_rescue = np.zeros_like(principal_after_horizontal_mask, dtype=np.uint8)
+    merged_before_secondary_rescue[principal_after_horizontal_mask > 0] = 255
+    merged_before_secondary_rescue[secondary_mask_before_rescue > 0] = 255
+
     gap_rescue_roi_mask = gap_rescue_result["roi_mask"]
     gap_rescue_candidate_mask = gap_rescue_result["candidate_mask"]
     gap_rescue_rejected_mask = gap_rescue_result["rejected_mask"]
     gap_rescue_accepted_mask = gap_rescue_result["accepted_mask"]
+
+    gap_rescue_rejected_mask = merge_masks(
+        gap_rescue_rejected_mask,
+        floating_gap_removed_mask,
+    )
+    gap_rescue_accepted_mask = gap_rescue_mask
 
     secondary_rescue_result = run_guarded_secondary_rescue(
         binary_top2_guarded=binary_top2_guarded,
@@ -777,12 +968,25 @@ def process_image(index: int, current: int, total: int) -> None:
     )
 
     secondary_mask_after_rescue = secondary_rescue_result["secondary_mask"]
-    secondary_rescue_mask = secondary_rescue_result["rescue_mask"]
-    merged_final_mask_before_small_clean = secondary_rescue_result["merged_mask"]
+    secondary_rescue_mask_raw = secondary_rescue_result["rescue_mask"]
+
+    secondary_rescue_mask, right_isolated_rescue_removed_mask = filter_right_isolated_secondary_rescue(
+        secondary_rescue_mask_raw,
+        merged_before_secondary_rescue,
+    )
+
+    merged_final_mask_before_small_clean = np.zeros_like(merged_before_secondary_rescue, dtype=np.uint8)
+    merged_final_mask_before_small_clean[merged_before_secondary_rescue > 0] = 255
+    merged_final_mask_before_small_clean[secondary_rescue_mask > 0] = 255
+
     merged_final_mask, small_component_removed_mask = remove_very_small_components(
         merged_final_mask_before_small_clean,
     )
     secondary_rescue_removed_mask = secondary_rescue_result["removed_secondary_mask"]
+    secondary_rescue_removed_mask = merge_masks(
+        secondary_rescue_removed_mask,
+        right_isolated_rescue_removed_mask,
+    )
     secondary_rescue_roi_mask = secondary_rescue_result["roi_mask"]
     secondary_rescue_candidate_mask = secondary_rescue_result["candidate_mask"]
     secondary_rescue_rejected_mask = secondary_rescue_result["rejected_mask"]
@@ -1149,6 +1353,8 @@ def main() -> None:
 
     for current, index in enumerate(indices, start=1):
         process_image(index, current, total)
+
+    make_rest_final_contours_contact_sheet(exclude_indices=set())
 
 
 
