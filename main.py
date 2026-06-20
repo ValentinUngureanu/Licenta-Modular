@@ -7,14 +7,16 @@ from crop import crop_ultrasound
 from preprocessing import preprocess_crop
 from traveler import build_traveler
 from principal_component import build_principal_component
-from principal_selector import (
-    draw_principal_selector_debug,
-    select_principal_by_lower_candidate,
+from principal_selector import select_principal_by_lower_candidate
+from horizontal_rescue import (
+    draw_horizontal_merged_debug,
+    draw_horizontal_rescue_debug,
+    horizontal_rescue_before_secondary,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/PRINCIPAL_SELECTOR_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/HORIZONTAL_RESCUE_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -58,14 +60,19 @@ def main():
             traveler_points,
         )
 
-        original_principal_mask = principal_result["principal_mask"]
-
         selector_result = select_principal_by_lower_candidate(
             binary_top2,
-            original_principal_mask,
+            principal_result["principal_mask"],
         )
 
-        selected_principal_mask = selector_result["principal_mask"]
+        principal_mask = selector_result["principal_mask"]
+
+        horizontal_result = horizontal_rescue_before_secondary(
+            binary_top2,
+            principal_mask,
+            traveler_points=traveler_points,
+        )
+
         stem = image_path.stem
 
         save(
@@ -74,42 +81,60 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "01_ORIGINAL_PRINCIPAL" / f"{stem}_original_principal.png",
-            original_principal_mask,
+            OUTPUT_DIR / "01_PRINCIPAL_MASK" / f"{stem}_principal_mask.png",
+            principal_mask,
         )
 
         save(
-            OUTPUT_DIR / "02_SELECTOR_ROI" / f"{stem}_selector_roi.png",
-            selector_result["roi_mask"],
+            OUTPUT_DIR / "02_HORIZONTAL_ROI" / f"{stem}_horizontal_roi.png",
+            horizontal_result["roi_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_SELECTOR_SEARCH" / f"{stem}_selector_search.png",
-            selector_result["search_mask"],
+            OUTPUT_DIR / "03_HORIZONTAL_CANDIDATE" / f"{stem}_horizontal_candidate.png",
+            horizontal_result["candidate_mask"],
         )
 
         save(
-            OUTPUT_DIR / "04_SELECTOR_CANDIDATE" / f"{stem}_selector_candidate.png",
-            selector_result["candidate_mask"],
+            OUTPUT_DIR / "04_HORIZONTAL_ACCEPTED" / f"{stem}_horizontal_accepted.png",
+            horizontal_result["accepted_mask"],
         )
 
         save(
-            OUTPUT_DIR / "05_SELECTOR_SELECTED" / f"{stem}_selector_selected.png",
-            selector_result["selected_mask"],
+            OUTPUT_DIR / "05_HORIZONTAL_REJECTED" / f"{stem}_horizontal_rejected.png",
+            horizontal_result["rejected_mask"],
         )
 
         save(
-            OUTPUT_DIR / "06_FINAL_PRINCIPAL" / f"{stem}_final_principal.png",
-            selected_principal_mask,
+            OUTPUT_DIR / "06_HORIZONTAL_RESCUE" / f"{stem}_horizontal_rescue.png",
+            horizontal_result["rescue_mask"],
         )
 
         save(
-            OUTPUT_DIR / "07_SELECTOR_DEBUG" / f"{stem}_selector_debug.png",
-            draw_principal_selector_debug(
+            OUTPUT_DIR / "07_MERGED_MASK" / f"{stem}_merged_mask.png",
+            horizontal_result["merged_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "08_HORIZONTAL_DEBUG" / f"{stem}_horizontal_debug.png",
+            draw_horizontal_rescue_debug(
                 crop,
-                original_principal_mask,
-                selector_result,
-                traveler_points,
+                principal_mask,
+                horizontal_result["rescue_mask"],
+                horizontal_result["roi_mask"],
+                horizontal_result["candidate_mask"],
+                horizontal_result["accepted_mask"],
+                horizontal_result["rejected_mask"],
+                traveler_points=traveler_points,
+            ),
+        )
+
+        save(
+            OUTPUT_DIR / "09_MERGED_DEBUG" / f"{stem}_merged_debug.png",
+            draw_horizontal_merged_debug(
+                crop,
+                horizontal_result["merged_mask"],
+                traveler_points=traveler_points,
             ),
         )
 
