@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 RESCUE_COLOR = (255, 0, 255)
@@ -13,9 +12,6 @@ MERGED_COLOR = (0, 255, 0)
 
 GAP_RESCUE_ENABLE = True
 
-# Rescue-ul acesta NU este pentru cazurile 30/31 sau 52.
-# Se activeaza doar cand secondary normal a gasit aproape nimic,
-# dar top2 contine o continuare laterala mare, aproape de nivelul median al principalului.
 GAP_TRIGGER_MAX_SECONDARY_AREA = 650
 GAP_TRIGGER_MAX_SECONDARY_TO_PRINCIPAL = 0.22
 GAP_TRIGGER_MIN_PRINCIPAL_WIDTH = 250
@@ -38,19 +34,13 @@ GAP_MAX_MEDIAN_DISTANCE_PX = 32
 GAP_MAX_P90_DISTANCE_PX = 44
 GAP_MAX_ACCEPTED_COMPONENTS_PER_SIDE = 1
 
-# Guard local pentru cazul in care capatul lateral al pleurei este mult mai jos
-# decat mediana globala a principalului. In acest caz nu acceptam insule care
-# stau aproape de mediana globala, dar sunt mult deasupra capatului real.
 GAP_LOCAL_EDGE_GUARD_ENABLE = True
 GAP_LOCAL_EDGE_ACTIVATE_DIFF_PX = 34
 GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX = 28
 
-# 39/40 au bucati foarte mici de legatura, reale, pe care gap_rescue trebuie sa le pastreze.
-# Guard-ul pentru 37 se aplica doar pe insule suficient de mari, nu pe punte mica.
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA = 80
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH = 22
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT = 9
-
 
 
 def normalize_mask(mask):
@@ -86,8 +76,8 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.60):
     result_float = result.astype(np.float32)
 
     result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
+            (1.0 - alpha) * result_float[mask_bool]
+            + alpha * color_array
     )
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
@@ -186,7 +176,6 @@ def component_stats(component_mask):
     }
 
 
-
 def edge_y_from_mask(mask, side):
     mask = normalize_mask(mask)
     ys, xs = np.where(mask > 0)
@@ -211,9 +200,6 @@ def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_cent
     if not GAP_LOCAL_EDGE_GUARD_ENABLE:
         return False
 
-    # Guard-ul acesta a fost introdus pentru poza 37,
-    # unde artefactul este in STANGA.
-    # La 39/40 extensia utila este in DREAPTA, deci nu blocam partea dreapta.
     if side != "left":
         return False
 
@@ -225,12 +211,10 @@ def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_cent
     if stats is None:
         return False
 
-    # 39/40: puntea mica reala poate fi mai sus fata de capatul local,
-    # dar e foarte mica. Nu o tratam ca artefact.
     is_small_bridge = (
-        stats["area"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA
-        and stats["width"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH
-        and stats["height"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT
+            stats["area"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA
+            and stats["width"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH
+            and stats["height"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT
     )
 
     if is_small_bridge:
@@ -238,23 +222,18 @@ def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_cent
 
     principal_edge_y = edge_y_from_mask(principal_mask, side)
 
-    # Activam doar cand capatul real este mult mai jos decat mediana globala.
-    # Exact aici banda veche centrata pe median_y poate prinde artefacte de sus.
     edge_is_much_lower_than_center = (
-        principal_edge_y > float(y_center) + GAP_LOCAL_EDGE_ACTIVATE_DIFF_PX
+            principal_edge_y > float(y_center) + GAP_LOCAL_EDGE_ACTIVATE_DIFF_PX
     )
 
     if not edge_is_much_lower_than_center:
         return False
 
-    # Daca mediana componentei este mult deasupra capatului real,
-    # componenta nu continua pleura laterala. Este o insula superioara.
     component_too_high_for_edge = (
-        stats["median_y"] < principal_edge_y - GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX
+            stats["median_y"] < principal_edge_y - GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX
     )
 
     return bool(component_too_high_for_edge)
-
 
 
 def should_try_gap_rescue(principal_mask, secondary_mask):
@@ -382,10 +361,10 @@ def score_gap_candidate(component_mask, principal_mask, y_center, side):
         return None
 
     if is_gap_candidate_wrong_for_local_edge(
-        component_mask,
-        principal_mask,
-        y_center,
-        side,
+            component_mask,
+            principal_mask,
+            y_center,
+            side,
     ):
         return None
 
@@ -475,11 +454,11 @@ def gap_rescue_for_side(binary_top2, principal_mask, already_merged_mask, side):
 
 
 def gap_rescue_after_secondary(
-    binary_top2,
-    principal_mask,
-    secondary_mask,
-    merged_mask,
-    traveler_points=None,
+        binary_top2,
+        principal_mask,
+        secondary_mask,
+        merged_mask,
+        traveler_points=None,
 ):
     binary_top2 = normalize_mask(binary_top2)
     principal_mask = normalize_mask(principal_mask)
@@ -537,15 +516,15 @@ def gap_rescue_after_secondary(
 
 
 def draw_gap_rescue_debug(
-    crop,
-    principal_mask,
-    secondary_mask,
-    rescue_mask,
-    roi_mask,
-    candidate_mask,
-    accepted_mask,
-    rejected_mask,
-    traveler_points=None,
+        crop,
+        principal_mask,
+        secondary_mask,
+        rescue_mask,
+        roi_mask,
+        candidate_mask,
+        accepted_mask,
+        rejected_mask,
+        traveler_points=None,
 ):
     result = to_bgr(crop)
 
