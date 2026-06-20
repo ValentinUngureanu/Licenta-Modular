@@ -1,8 +1,8 @@
-# MAIN ALL IMAGES - FIX POZA 55 RIGHT ISOLATED HORIZONTAL 1
+# MAIN ALL IMAGES - FIX POZA 59 LEFT LOW ARTIFACT 3
 # Ruleaza toate imaginile din ORIGINAL_IMAGES.
-# Salveaza rezultatele in RESULTS/06_FINAL_CONTOUR_TEST.
-# Pastreaza varianta curata V16 si adauga un guard local pentru componenta orizontala izolata din dreapta la poza 55.
-# Debug detaliat separat pentru poza 55.
+# Pastreaza varianta curenta si extinde guard-ul pentru artefactul stanga-jos din poza 59.
+# Fix v3: elimina si componenta secondary_rescue mai mare x=141..214, y=282..317.
+# Debug detaliat separat pentru poza 59.
 
 import shutil
 import re
@@ -89,10 +89,10 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_55_RIGHT_ISOLATED_HORIZONTAL1.jpg"
+REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_59_LEFT_LOW_ARTIFACT3.jpg"
 
-FOCUS_DEBUG_INDICES = {55}
-FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_55_RIGHT_ISOLATED_HORIZONTAL1"
+FOCUS_DEBUG_INDICES = {59}
+FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_59_LEFT_LOW_ARTIFACT3"
 
 
 SMALL_COMPONENT_CLEAN_ENABLE = True
@@ -868,6 +868,137 @@ def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal
 
 
 
+
+LEFT_LOW_FAR_ARTIFACT_GUARD_ENABLE = True
+LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_AREA = 2500
+LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_X = 330
+LEFT_LOW_FAR_ARTIFACT_MIN_GAP_FROM_MAIN = 170
+LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY = 70
+LEFT_LOW_FAR_ARTIFACT_MAX_AREA = 1300
+LEFT_LOW_FAR_ARTIFACT_MAX_WIDTH = 100
+LEFT_LOW_FAR_ARTIFACT_MAX_HEIGHT = 55
+
+
+def get_largest_component_geometry(mask):
+    if mask is None or mask_area(mask) == 0:
+        return None
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    if num_labels <= 1:
+        return None
+
+    best_label = None
+    best_area = -1
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+
+        if area > best_area:
+            best_area = area
+            best_label = label
+
+    if best_label is None:
+        return None
+
+    x = int(stats[best_label, cv2.CC_STAT_LEFT])
+    y = int(stats[best_label, cv2.CC_STAT_TOP])
+    width = int(stats[best_label, cv2.CC_STAT_WIDTH])
+    height = int(stats[best_label, cv2.CC_STAT_HEIGHT])
+
+    return {
+        "label": best_label,
+        "area": int(best_area),
+        "min_x": x,
+        "max_x": x + width - 1,
+        "min_y": y,
+        "max_y": y + height - 1,
+        "width": width,
+        "height": height,
+        "centroid_x": float(centroids[best_label][0]),
+        "centroid_y": float(centroids[best_label][1]),
+    }
+
+
+def filter_left_low_far_artifact_components(mask, reference_mask):
+    if not LEFT_LOW_FAR_ARTIFACT_GUARD_ENABLE:
+        return mask, empty_mask_like(mask)
+
+    if mask is None or reference_mask is None:
+        return mask, empty_mask_like(mask)
+
+    if mask_area(mask) == 0 or mask_area(reference_mask) == 0:
+        return mask, empty_mask_like(mask)
+
+    reference_main = get_largest_component_geometry(reference_mask)
+
+    if reference_main is None:
+        return mask, empty_mask_like(mask)
+
+    # Activam regula doar cand componenta principala reala este clar mai in dreapta.
+    # Pentru poza 59: main x=428..752, iar artefactele sunt x=120..210.
+    # Asta evita sa taiem imagini unde pleura incepe firesc din stanga.
+    if (
+        reference_main["area"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_AREA
+        or reference_main["min_x"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_X
+    ):
+        return mask, empty_mask_like(mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    if num_labels <= 1:
+        return mask, empty_mask_like(mask)
+
+    kept = np.zeros_like(mask, dtype=np.uint8)
+    removed = np.zeros_like(mask, dtype=np.uint8)
+
+    for label in range(1, num_labels):
+        component_pixels = labels == label
+
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+        component_cy = float(centroids[label][1])
+
+        far_left_from_main = (
+            x2 <= reference_main["min_x"] - LEFT_LOW_FAR_ARTIFACT_MIN_GAP_FROM_MAIN
+        )
+
+        much_lower_than_main = (
+            component_cy >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
+            or y >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
+        )
+
+        size_matches = (
+            area <= LEFT_LOW_FAR_ARTIFACT_MAX_AREA
+            and width <= LEFT_LOW_FAR_ARTIFACT_MAX_WIDTH
+            and height <= LEFT_LOW_FAR_ARTIFACT_MAX_HEIGHT
+        )
+
+        # Caz 59:
+        # principal: x=156..210 y=285..299 area=378
+        # secondary: x=120..145 y=308..322 area=239
+        # secondary: x=141..156 y=286..300 area=102
+        # Sunt departe in stanga fata de componenta principala mare si mult mai jos.
+        if size_matches and far_left_from_main and much_lower_than_main:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
+
+
 def filter_secondary_tail_after_horizontal(
     secondary_mask,
     horizontal_rescue_mask,
@@ -1626,6 +1757,17 @@ def process_image(index: int, current: int, total: int) -> None:
     )
     principal_mask = principal_selector_result["principal_mask"]
 
+    principal_mask, left_low_principal_removed_mask = filter_left_low_far_artifact_components(
+        principal_mask,
+        principal_mask,
+    )
+
+    if mask_area(left_low_principal_removed_mask) > 0:
+        rejected_principal_mask = merge_masks(
+            rejected_principal_mask,
+            left_low_principal_removed_mask,
+        )
+
     horizontal_result = run_guarded_horizontal_rescue(
         binary_top2,
         principal_mask,
@@ -1722,9 +1864,18 @@ def process_image(index: int, current: int, total: int) -> None:
         principal_mask,
     )
 
+    secondary_mask_normal, left_low_secondary_removed_mask = filter_left_low_far_artifact_components(
+        secondary_mask_normal,
+        principal_mask,
+    )
+
     secondary_total_removed_mask = merge_masks(
         secondary_tail_after_horizontal_removed_mask,
         secondary_floating_readd_removed_mask,
+    )
+    secondary_total_removed_mask = merge_masks(
+        secondary_total_removed_mask,
+        left_low_secondary_removed_mask,
     )
 
     secondary_accepted_mask = secondary_mask_normal
@@ -1782,6 +1933,16 @@ def process_image(index: int, current: int, total: int) -> None:
         principal_mask,
     )
 
+    secondary_mask_before_rescue, left_low_combined_removed_mask = filter_left_low_far_artifact_components(
+        secondary_mask_before_rescue,
+        principal_mask,
+    )
+
+    combined_secondary_gap_removed_mask = merge_masks(
+        combined_secondary_gap_removed_mask,
+        left_low_combined_removed_mask,
+    )
+
     gap_rescue_rejected_mask = empty_mask_like(principal_after_horizontal_mask)
     gap_rescue_rejected_mask = merge_masks(
         gap_rescue_rejected_mask,
@@ -1823,6 +1984,11 @@ def process_image(index: int, current: int, total: int) -> None:
         merged_before_secondary_rescue,
     )
 
+    secondary_rescue_mask, left_low_secondary_rescue_removed_mask = filter_left_low_far_artifact_components(
+        secondary_rescue_mask,
+        principal_mask,
+    )
+
     merged_final_mask_before_small_clean = np.zeros_like(merged_before_secondary_rescue, dtype=np.uint8)
     merged_final_mask_before_small_clean[merged_before_secondary_rescue > 0] = 255
     merged_final_mask_before_small_clean[secondary_rescue_mask > 0] = 255
@@ -1834,6 +2000,10 @@ def process_image(index: int, current: int, total: int) -> None:
     secondary_rescue_removed_mask = merge_masks(
         secondary_rescue_removed_mask,
         right_isolated_rescue_removed_mask,
+    )
+    secondary_rescue_removed_mask = merge_masks(
+        secondary_rescue_removed_mask,
+        left_low_secondary_rescue_removed_mask,
     )
     secondary_rescue_roi_mask = secondary_rescue_result["roi_mask"]
     secondary_rescue_candidate_mask = secondary_rescue_result["candidate_mask"]
