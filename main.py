@@ -5,18 +5,17 @@ import cv2
 
 from crop import crop_ultrasound
 from preprocessing import preprocess_crop
-from traveler import (
-    build_traveler,
-    draw_clean_selected_component,
-    draw_extended_component,
-    draw_raw_traveler_points,
-    draw_selected_component,
-    draw_traveler_components_colored,
+from traveler import build_traveler
+from principal_component import (
+    build_principal_component,
+    draw_candidate_mask,
+    draw_principal_component,
+    draw_principal_roi,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/TRAVELER_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/PRINCIPAL_COMPONENT_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -51,14 +50,12 @@ def main():
 
         binary_top1 = preprocessing_result["binary_top1"]
         traveler_result = build_traveler(binary_top1)
+        traveler_points = traveler_result["extended_points"]
 
-        raw_points = traveler_result["raw_points"]
-        components = traveler_result["components"]
-        selected_points = traveler_result["selected_points"]
-        cleaned_points = traveler_result["cleaned_points"]
-        removed_points = traveler_result["removed_points"]
-        extended_points = traveler_result["extended_points"]
-        added_component_ids = traveler_result["added_component_ids"]
+        principal_result = build_principal_component(
+            binary_top1,
+            traveler_points,
+        )
 
         stem = image_path.stem
 
@@ -73,38 +70,50 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "02_RAW_TRAVELER" / f"{stem}_raw_traveler.png",
-            draw_raw_traveler_points(crop, raw_points),
+            OUTPUT_DIR / "02_ROI_MASK" / f"{stem}_roi_mask.png",
+            principal_result["roi_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_COMPONENTS" / f"{stem}_components.png",
-            draw_traveler_components_colored(crop, components),
+            OUTPUT_DIR / "03_CANDIDATE_MASK" / f"{stem}_candidate_mask.png",
+            principal_result["candidate_mask"],
         )
 
         save(
-            OUTPUT_DIR / "04_SELECTED" / f"{stem}_selected.png",
-            draw_selected_component(crop, raw_points, selected_points),
+            OUTPUT_DIR / "04_PRINCIPAL_MASK" / f"{stem}_principal_mask.png",
+            principal_result["principal_mask"],
         )
 
         save(
-            OUTPUT_DIR / "05_CLEANED" / f"{stem}_cleaned.png",
-            draw_clean_selected_component(
+            OUTPUT_DIR / "05_REJECTED_MASK" / f"{stem}_rejected_mask.png",
+            principal_result["rejected_mask"],
+        )
+
+        save(
+            OUTPUT_DIR / "06_ROI_OVERLAY" / f"{stem}_roi_overlay.png",
+            draw_principal_roi(
                 crop,
-                selected_points,
-                cleaned_points,
-                removed_points,
+                principal_result["roi_mask"],
+                traveler_points,
             ),
         )
 
         save(
-            OUTPUT_DIR / "06_EXTENDED" / f"{stem}_extended.png",
-            draw_extended_component(
+            OUTPUT_DIR / "07_CANDIDATE_OVERLAY" / f"{stem}_candidate_overlay.png",
+            draw_candidate_mask(
                 crop,
-                raw_points,
-                extended_points,
-                components,
-                added_component_ids,
+                principal_result["candidate_mask"],
+                traveler_points,
+            ),
+        )
+
+        save(
+            OUTPUT_DIR / "08_PRINCIPAL_OVERLAY" / f"{stem}_principal_overlay.png",
+            draw_principal_component(
+                crop,
+                principal_result["principal_mask"],
+                principal_result["rejected_mask"],
+                traveler_points,
             ),
         )
 

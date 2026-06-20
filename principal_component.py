@@ -47,7 +47,7 @@ def to_bgr(image):
 
 
 def fit_principal_model(traveler_points, image_shape):
-    height, width = image_shape[:2]
+    _, width = image_shape[:2]
 
     if traveler_points is None or len(traveler_points) == 0:
         def predict_empty(x_values):
@@ -169,10 +169,8 @@ def build_principal_roi_mask(binary_mask, traveler_points):
 
     for x, center_y in zip(xs.astype(np.int32), ys):
         cy = int(round(center_y))
-
         top = max(0, cy - half_height)
         bottom = min(height, cy + half_height + 1)
-
         roi_mask[top:bottom, x] = 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -222,7 +220,7 @@ def component_stats_from_mask(component_mask):
 
 
 def score_principal_fragment(component_mask, predict, half_height, image_shape):
-    height, width = image_shape[:2]
+    _, width = image_shape[:2]
 
     stats = component_stats_from_mask(component_mask)
 
@@ -279,11 +277,9 @@ def score_principal_fragment(component_mask, predict, half_height, image_shape):
 
 def extract_principal_fragments(binary_mask, roi_mask, predict, half_height):
     binary = normalize_binary_mask(binary_mask)
-    height, width = binary.shape[:2]
-
     candidate_mask = cv2.bitwise_and(binary, roi_mask)
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+    num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
         candidate_mask,
         connectivity=8,
     )
@@ -309,14 +305,12 @@ def extract_principal_fragments(binary_mask, roi_mask, predict, half_height):
     scored_components.sort(key=lambda item: item[0], reverse=True)
 
     principal_mask = np.zeros_like(binary, dtype=np.uint8)
-
     kept = scored_components[:PRINCIPAL_KEEP_TOP_COMPONENTS]
 
     for _, _, component_mask in kept:
         principal_mask[component_mask > 0] = 255
 
     rejected_mask = np.zeros_like(binary, dtype=np.uint8)
-
     kept_labels = {label for _, label, _ in kept}
 
     for label in range(1, num_labels):
@@ -407,8 +401,8 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
         return result
 
     color_array = np.array(color, dtype=np.float32)
-
     result_float = result.astype(np.float32)
+
     result_float[mask_bool] = (
         (1.0 - alpha) * result_float[mask_bool]
         + alpha * color_array
