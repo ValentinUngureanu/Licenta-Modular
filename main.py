@@ -1,8 +1,8 @@
-# MAIN ALL IMAGES - VARIANTA CURATA V16
+# MAIN ALL IMAGES - FIX POZA 55 RIGHT ISOLATED HORIZONTAL 1
 # Ruleaza toate imaginile din ORIGINAL_IMAGES.
 # Salveaza rezultatele in RESULTS/06_FINAL_CONTOUR_TEST.
-# Pastreaza fixurile stabile pentru 18, 30, 37, 39, 40, 41, 44, 46 si 54.
-# Debug detaliat separat pentru pozele 30 si 54.
+# Pastreaza varianta curata V16 si adauga un guard local pentru componenta orizontala izolata din dreapta la poza 55.
+# Debug detaliat separat pentru poza 55.
 
 import shutil
 import re
@@ -89,10 +89,10 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_V16_CLEAN.jpg"
+REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR_55_RIGHT_ISOLATED_HORIZONTAL1.jpg"
 
-FOCUS_DEBUG_INDICES = {30, 54}
-FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZE_30_54_V16_CLEAN"
+FOCUS_DEBUG_INDICES = {55}
+FOCUS_DEBUG_DIR = config.RESULTS_DIR / "99_DEBUG_POZA_55_RIGHT_ISOLATED_HORIZONTAL1"
 
 
 SMALL_COMPONENT_CLEAN_ENABLE = True
@@ -768,6 +768,104 @@ SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH = 45
 SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT = 28
 SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP = -2
 SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX = 32
+
+
+
+RIGHT_ISOLATED_HORIZONTAL_COMPONENT_GUARD_ENABLE = True
+RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN = 75
+RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN = 30
+RIGHT_ISOLATED_HORIZONTAL_MAX_AREA = 220
+RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH = 35
+RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT = 18
+RIGHT_ISOLATED_HORIZONTAL_MIN_MAIN_AREA = 350
+RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y = 200
+
+
+def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal_mask):
+    if not RIGHT_ISOLATED_HORIZONTAL_COMPONENT_GUARD_ENABLE:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if horizontal_rescue_mask is None or principal_mask is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if mask_area(horizontal_rescue_mask) == 0 or mask_area(principal_mask) == 0:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_mask)
+
+    if principal_bounds is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (horizontal_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    if num_labels <= 2:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    components = []
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+
+        components.append({
+            "label": label,
+            "area": area,
+            "x": x,
+            "x2": x2,
+            "y": y,
+            "y2": y2,
+            "width": width,
+            "height": height,
+        })
+
+    main_component = max(components, key=lambda item: item["area"])
+
+    if main_component["area"] < RIGHT_ISOLATED_HORIZONTAL_MIN_MAIN_AREA:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    kept = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+
+    for component in components:
+        label = component["label"]
+        component_pixels = labels == label
+
+        if label == main_component["label"]:
+            kept[component_pixels] = 255
+            continue
+
+        right_gain = component["x2"] - principal_bounds["max_x"]
+        gap_from_main = component["x"] - main_component["x2"]
+
+        is_small_right_isolated = (
+            component["area"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_AREA
+            and component["width"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH
+            and component["height"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT
+            and right_gain >= RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN
+            and gap_from_main >= RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN
+            and component["y"] >= RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y
+        )
+
+        # Caz 55:
+        # componenta #4 este x=795..816, y=237..247, area=140,
+        # separata de componenta principala horizontal_rescue.
+        # O eliminam ca artefact izolat de dreapta, fara sa atingem componenta
+        # principala sau extensiile lipite de ea.
+        if is_small_right_isolated:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
 
 
 def filter_secondary_tail_after_horizontal(
@@ -1552,9 +1650,18 @@ def process_image(index: int, current: int, total: int) -> None:
         principal_mask,
     )
 
+    horizontal_rescue_mask, horizontal_right_isolated_removed_mask = filter_right_isolated_horizontal_component(
+        horizontal_rescue_mask,
+        principal_mask,
+    )
+
     horizontal_removed_mask = merge_masks(
         horizontal_layered_tail_removed_mask,
         horizontal_floating_strip_removed_mask,
+    )
+    horizontal_removed_mask = merge_masks(
+        horizontal_removed_mask,
+        horizontal_right_isolated_removed_mask,
     )
 
     principal_after_horizontal_mask = merge_masks(
