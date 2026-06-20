@@ -2,30 +2,13 @@ import cv2
 import numpy as np
 
 
-# ============================================================
-# PRINCIPAL SANITY CHECK
-# ============================================================
-# Rol:
-#   - NU inlocuieste principal_component.
-#   - Verifica doar cazul rar in care principalul ales este prea sus
-#     si exista in top2 o structura mai profunda, subtire si orizontala,
-#     care seamana mai mult cu pleura.
-#
-# Motiv:
-#   - Pentru imagini de tip 52, traveler/principal se pot lipi de un
-#     artefact luminos superficial. Secondary/gap rescue nu pot repara
-#     corect daca principalul de pornire este deja gresit.
-# ============================================================
-
 PRINCIPAL_SANITY_ENABLE = True
 
-# Principal suspect daca este foarte sus in crop.
 SUSPECT_MAX_MEDIAN_Y_FRAC = 0.31
 SUSPECT_MAX_BOTTOM_Y_FRAC = 0.38
 SUSPECT_MIN_AREA = 250
 SUSPECT_MIN_WIDTH_PX = 45
 
-# Cautarea alternativei mai jos.
 LOWER_SEARCH_MIN_EXTRA_Y = 22
 LOWER_SEARCH_MIN_Y_FRAC = 0.27
 LOWER_SEARCH_MAX_Y_FRAC = 0.64
@@ -34,13 +17,11 @@ LOWER_CANDIDATE_MIN_AREA = 220
 LOWER_CANDIDATE_MAX_HEIGHT_FRAC = 0.24
 LOWER_CANDIDATE_MIN_MEDIAN_DELTA_Y = 34
 
-# Grupare fragmente apropiate pe orizontala.
 LINK_KERNEL_W = 35
 LINK_KERNEL_H = 5
 LINK_DILATE_W = 13
 LINK_DILATE_H = 7
 
-# Din componenta candidata pastram banda superioara, nu toata pata verticala.
 TOP_BAND_KEEP_ABOVE_PX = 2
 TOP_BAND_KEEP_BELOW_PX = 15
 TOP_BAND_MIN_COLUMN_PIXELS = 1
@@ -62,6 +43,7 @@ def empty_mask_like(mask):
 def mask_area(mask) -> int:
     if mask is None:
         return 0
+
     return int(np.count_nonzero(mask > 0))
 
 
@@ -105,6 +87,7 @@ def remove_small_components(mask, min_area):
 
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
+
         if area >= min_area:
             result[labels == label] = 255
 
@@ -166,6 +149,7 @@ def build_lower_search_roi(binary_top2, principal_mask):
     end_y = max(start_y + 1, min(height, end_y))
 
     roi[start_y:end_y, :] = 255
+
     return roi
 
 
@@ -197,13 +181,10 @@ def score_lower_candidate(component_mask, original_candidate_mask, principal_mas
     if candidate_median_y < principal_median_y + LOWER_CANDIDATE_MIN_MEDIAN_DELTA_Y:
         return None
 
-    # Preferam componente centrale, dar nu obligam strict, deoarece pleura
-    # poate fi partial vizibila doar pe o parte.
     center_x = width / 2.0
     candidate_center_x = (bounds["min_x"] + bounds["max_x"]) / 2.0
     center_penalty = abs(candidate_center_x - center_x) / max(width, 1)
 
-    # Cautam o structura subtire, orizontala, suficient de intinsa.
     thinness_bonus = bounds["width"] / max(bounds["height"], 1)
     vertical_penalty = bounds["height"] * 1.25
     y_penalty = abs(candidate_median_y - 0.38 * height) * 0.35
@@ -239,7 +220,7 @@ def find_lower_principal_candidate(binary_top2, principal_mask):
     )
     linked_mask = cv2.morphologyEx(search_mask, cv2.MORPH_CLOSE, link_kernel, iterations=1)
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
+    num_labels, labels, _, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
 
     best_score = None
     best_mask = empty_mask_like(binary_top2)
@@ -254,8 +235,6 @@ def find_lower_principal_candidate(binary_top2, principal_mask):
         component_linked = np.zeros_like(binary_top2, dtype=np.uint8)
         component_linked[labels == label] = 255
 
-        # Folosim componenta inchisa doar ca zona de grupare. Pixelii reali
-        # vin inapoi din binary_top2, ca sa nu inventam grosime falsa.
         component_region = cv2.dilate(component_linked, dilate_kernel, iterations=1)
         component_original = cv2.bitwise_and(search_mask, component_region)
 
@@ -272,6 +251,7 @@ def find_lower_principal_candidate(binary_top2, principal_mask):
         if best_score is None or score > best_score:
             if mask_area(best_mask) > 0:
                 rejected_mask = merge_masks(rejected_mask, best_mask)
+
             best_score = score
             best_mask = component_original
         else:
@@ -340,6 +320,7 @@ def repair_principal_if_upper_artifact(binary_top2, principal_mask):
         }
 
     candidate_result = find_lower_principal_candidate(binary_top2, principal_mask)
+
     candidate_mask = candidate_result["candidate_mask"]
     roi_mask = candidate_result["roi_mask"]
     rejected_mask = candidate_result["rejected_mask"]
@@ -375,6 +356,7 @@ def repair_principal_if_upper_artifact(binary_top2, principal_mask):
 
     if not valid_replacement:
         rejected_mask = merge_masks(rejected_mask, candidate_mask)
+
         return {
             "principal_mask": principal_mask,
             "changed": False,
@@ -397,6 +379,7 @@ def repair_principal_if_upper_artifact(binary_top2, principal_mask):
 def to_bgr(image):
     if len(image.shape) == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
     return image.copy()
 
 
@@ -409,8 +392,8 @@ def draw_mask_overlay(image_bgr, mask, color, alpha=0.65):
 
     overlay = output.copy()
     overlay[mask > 0] = color
-    output = cv2.addWeighted(overlay, alpha, output, 1.0 - alpha, 0)
-    return output
+
+    return cv2.addWeighted(overlay, alpha, output, 1.0 - alpha, 0)
 
 
 def draw_principal_sanity_debug(
@@ -423,8 +406,6 @@ def draw_principal_sanity_debug(
 ):
     output = to_bgr(image_bgr)
 
-    # ROI = mov, candidati = galben, respinsi = rosu, principal initial = cyan,
-    # principal reparat = verde.
     output = draw_mask_overlay(output, roi_mask, (180, 0, 180), alpha=0.20)
     output = draw_mask_overlay(output, rejected_mask, (0, 0, 255), alpha=0.60)
     output = draw_mask_overlay(output, candidate_mask, (0, 255, 255), alpha=0.60)

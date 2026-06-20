@@ -6,16 +6,15 @@ import cv2
 from crop import crop_ultrasound
 from preprocessing import preprocess_crop
 from traveler import build_traveler
-from principal_component import (
-    build_principal_component,
-    draw_candidate_mask,
-    draw_principal_component,
-    draw_principal_roi,
+from principal_component import build_principal_component
+from principal_sanity import (
+    draw_principal_sanity_debug,
+    repair_principal_if_upper_artifact,
 )
 
 
 INPUT_DIR = Path("ORIGINAL_IMAGES")
-OUTPUT_DIR = Path("RESULTS/PRINCIPAL_COMPONENT_CLEAN_TEST1")
+OUTPUT_DIR = Path("RESULTS/PRINCIPAL_SANITY_CLEAN_TEST1")
 
 
 def image_index(path: Path) -> int:
@@ -49,6 +48,8 @@ def main():
         preprocessing_result = preprocess_crop(crop)
 
         binary_top1 = preprocessing_result["binary_top1"]
+        binary_top2 = preprocessing_result["binary_top2"]
+
         traveler_result = build_traveler(binary_top1)
         traveler_points = traveler_result["extended_points"]
 
@@ -57,6 +58,14 @@ def main():
             traveler_points,
         )
 
+        original_principal_mask = principal_result["principal_mask"]
+
+        sanity_result = repair_principal_if_upper_artifact(
+            binary_top2,
+            original_principal_mask,
+        )
+
+        repaired_principal_mask = sanity_result["principal_mask"]
         stem = image_path.stem
 
         save(
@@ -65,55 +74,39 @@ def main():
         )
 
         save(
-            OUTPUT_DIR / "01_BINARY_TOP1" / f"{stem}_binary_top1.png",
-            binary_top1,
+            OUTPUT_DIR / "01_ORIGINAL_PRINCIPAL" / f"{stem}_original_principal.png",
+            original_principal_mask,
         )
 
         save(
-            OUTPUT_DIR / "02_ROI_MASK" / f"{stem}_roi_mask.png",
-            principal_result["roi_mask"],
+            OUTPUT_DIR / "02_SANITY_ROI" / f"{stem}_sanity_roi.png",
+            sanity_result["roi_mask"],
         )
 
         save(
-            OUTPUT_DIR / "03_CANDIDATE_MASK" / f"{stem}_candidate_mask.png",
-            principal_result["candidate_mask"],
+            OUTPUT_DIR / "03_SANITY_CANDIDATE" / f"{stem}_sanity_candidate.png",
+            sanity_result["candidate_mask"],
         )
 
         save(
-            OUTPUT_DIR / "04_PRINCIPAL_MASK" / f"{stem}_principal_mask.png",
-            principal_result["principal_mask"],
+            OUTPUT_DIR / "04_SANITY_REPLACEMENT" / f"{stem}_sanity_replacement.png",
+            sanity_result["replacement_mask"],
         )
 
         save(
-            OUTPUT_DIR / "05_REJECTED_MASK" / f"{stem}_rejected_mask.png",
-            principal_result["rejected_mask"],
+            OUTPUT_DIR / "05_REPAIRED_PRINCIPAL" / f"{stem}_repaired_principal.png",
+            repaired_principal_mask,
         )
 
         save(
-            OUTPUT_DIR / "06_ROI_OVERLAY" / f"{stem}_roi_overlay.png",
-            draw_principal_roi(
+            OUTPUT_DIR / "06_SANITY_DEBUG" / f"{stem}_sanity_debug.png",
+            draw_principal_sanity_debug(
                 crop,
-                principal_result["roi_mask"],
-                traveler_points,
-            ),
-        )
-
-        save(
-            OUTPUT_DIR / "07_CANDIDATE_OVERLAY" / f"{stem}_candidate_overlay.png",
-            draw_candidate_mask(
-                crop,
-                principal_result["candidate_mask"],
-                traveler_points,
-            ),
-        )
-
-        save(
-            OUTPUT_DIR / "08_PRINCIPAL_OVERLAY" / f"{stem}_principal_overlay.png",
-            draw_principal_component(
-                crop,
-                principal_result["principal_mask"],
-                principal_result["rejected_mask"],
-                traveler_points,
+                original_principal_mask,
+                repaired_principal_mask,
+                sanity_result["roi_mask"],
+                sanity_result["candidate_mask"],
+                sanity_result["rejected_mask"],
             ),
         )
 
