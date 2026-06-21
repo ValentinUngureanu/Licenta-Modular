@@ -68,7 +68,7 @@ from top2_final_contour import build_top2_final_contour
 from top2_pleura import build_top2_guided_pleura
 from traveler import build_traveler, draw_extended_component
 
-FINAL_TEST_DIR = config.RESULTS_DIR / "06_FINAL_CONTOUR_TEST"
+FINAL_TEST_DIR = config.RESULTS_DIR / "FINAL_CONTOUR"
 
 CROP_DIR = FINAL_TEST_DIR / "00_CROP"
 PALETTE_7_DIR = FINAL_TEST_DIR / "01_PALETTE_7"
@@ -95,7 +95,7 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "21_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
+TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "20_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
 
 from postprocessing import (
@@ -544,7 +544,6 @@ def process_image(index: int, current: int, total: int) -> None:
     )
 
     top2_guided_result = build_top2_guided_pleura(
-        crop_bgr=crop,
         binary_top1=binary_top1,
         binary_top2=binary_top2,
         current_pleura_mask=merged_final_mask,
@@ -553,7 +552,6 @@ def process_image(index: int, current: int, total: int) -> None:
         crop_bgr=crop,
         current_pleura_mask=merged_final_mask,
         top2_guided_mask=top2_guided_result["top2_guided_mask"],
-        top2_added_mask=top2_guided_result["top2_added_to_current"],
     )
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
     save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)

@@ -61,7 +61,6 @@ def _build_search_band(anchor_mask: np.ndarray) -> np.ndarray:
 
     kernel_width = 2 * SEARCH_BAND_DILATE_X_PX + 1
     kernel_height = 2 * SEARCH_BAND_DILATE_Y_PX + 1
-
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE,
         (kernel_width, kernel_height),
@@ -72,13 +71,13 @@ def _build_search_band(anchor_mask: np.ndarray) -> np.ndarray:
     return search_band
 
 
-def _clean_top2_components(candidate_mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    candidate = _as_binary_mask(candidate_mask)
-    kept_mask = np.zeros_like(candidate, dtype=np.uint8)
-    rejected_mask = np.zeros_like(candidate, dtype=np.uint8)
+def _remove_small_components(mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        candidate,
+        binary,
         connectivity=8,
     )
 
@@ -87,15 +86,14 @@ def _clean_top2_components(candidate_mask: np.ndarray) -> Tuple[np.ndarray, np.n
         component = labels == label
 
         if area >= MIN_TOP2_CANDIDATE_COMPONENT_AREA_PX:
-            kept_mask[component] = 255
+            kept[component] = 255
         else:
-            rejected_mask[component] = 255
+            removed[component] = 255
 
-    return kept_mask, rejected_mask
+    return kept, removed
 
 
 def build_top2_guided_pleura(
-    crop_bgr: np.ndarray,
     binary_top1: np.ndarray,
     binary_top2: np.ndarray,
     current_pleura_mask: np.ndarray,
@@ -106,23 +104,16 @@ def build_top2_guided_pleura(
 
     search_band = _build_search_band(current)
     top2_in_search_band = _intersect_masks(top2, search_band)
-
     anchor_mask = _merge_masks(current, top1)
     top2_extension_candidate = _subtract_masks(top2_in_search_band, anchor_mask)
-
-    top2_extension_kept, top2_extension_rejected = _clean_top2_components(
+    top2_extension_kept, top2_extension_removed = _remove_small_components(
         top2_extension_candidate,
     )
-
     top2_guided_mask = _merge_masks(current, top2_extension_kept)
     top2_added_to_current = _subtract_masks(top2_guided_mask, current)
 
     return {
-        "search_band": search_band,
-        "top2_in_search_band": top2_in_search_band,
-        "top2_extension_candidate": top2_extension_candidate,
-        "top2_extension_kept": top2_extension_kept,
-        "top2_extension_rejected": top2_extension_rejected,
         "top2_guided_mask": top2_guided_mask,
         "top2_added_to_current": top2_added_to_current,
+        "top2_extension_removed": top2_extension_removed,
     }
