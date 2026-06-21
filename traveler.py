@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-
 RAW_POINT_COLOR = (255, 180, 0)
 SELECTED_COLOR = (0, 255, 0)
 CLEANED_COLOR = (0, 255, 0)
@@ -295,6 +294,7 @@ def fit_traveler_model(points, image_shape):
     height, width = image_shape[:2]
 
     if points is None or len(points) == 0:
+
         def predict_empty(x_values):
             x_values = np.asarray(x_values, dtype=np.float32)
             return np.zeros_like(x_values, dtype=np.float32)

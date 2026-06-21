@@ -1,11 +1,7 @@
 import cv2
 import numpy as np
 
-from postprocessing import (
-    empty_mask_like,
-    get_mask_bounds,
-    mask_area,
-)
+from postprocessing import empty_mask_like, get_mask_bounds
 
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
@@ -103,10 +99,9 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.60):
     color_array = np.array(color, dtype=np.float32)
     result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (
-            (1.0 - alpha) * result_float[mask_bool]
-            + alpha * color_array
-    )
+    result_float[mask_bool] = (1.0 - alpha) * result_float[
+        mask_bool
+    ] + alpha * color_array
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
 
@@ -224,7 +219,9 @@ def edge_y_from_mask(mask, side):
     return float(np.median(selected))
 
 
-def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_center, side):
+def is_gap_candidate_wrong_for_local_edge(
+    component_mask, principal_mask, y_center, side
+):
     if not GAP_LOCAL_EDGE_GUARD_ENABLE:
         return False
 
@@ -240,9 +237,9 @@ def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_cent
         return False
 
     is_small_bridge = (
-            stats["area"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA
-            and stats["width"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH
-            and stats["height"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT
+        stats["area"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA
+        and stats["width"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH
+        and stats["height"] <= GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT
     )
 
     if is_small_bridge:
@@ -251,14 +248,14 @@ def is_gap_candidate_wrong_for_local_edge(component_mask, principal_mask, y_cent
     principal_edge_y = edge_y_from_mask(principal_mask, side)
 
     edge_is_much_lower_than_center = (
-            principal_edge_y > float(y_center) + GAP_LOCAL_EDGE_ACTIVATE_DIFF_PX
+        principal_edge_y > float(y_center) + GAP_LOCAL_EDGE_ACTIVATE_DIFF_PX
     )
 
     if not edge_is_much_lower_than_center:
         return False
 
     component_too_high_for_edge = (
-            stats["median_y"] < principal_edge_y - GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX
+        stats["median_y"] < principal_edge_y - GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX
     )
 
     return bool(component_too_high_for_edge)
@@ -343,7 +340,7 @@ def build_gap_roi_for_side(binary_top2, principal_mask, side):
     if x2 < x1 or bottom <= top:
         return roi_mask, float(y_center)
 
-    roi_mask[top:bottom, x1:x2 + 1] = 255
+    roi_mask[top:bottom, x1 : x2 + 1] = 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
     roi_mask = cv2.dilate(roi_mask, kernel, iterations=1)
@@ -389,10 +386,10 @@ def score_gap_candidate(component_mask, principal_mask, y_center, side):
         return None
 
     if is_gap_candidate_wrong_for_local_edge(
-            component_mask,
-            principal_mask,
-            y_center,
-            side,
+        component_mask,
+        principal_mask,
+        y_center,
+        side,
     ):
         return None
 
@@ -482,11 +479,11 @@ def gap_rescue_for_side(binary_top2, principal_mask, already_merged_mask, side):
 
 
 def gap_rescue_after_secondary(
-        binary_top2,
-        principal_mask,
-        secondary_mask,
-        merged_mask,
-        traveler_points=None,
+    binary_top2,
+    principal_mask,
+    secondary_mask,
+    merged_mask,
+    traveler_points=None,
 ):
     binary_top2 = normalize_mask(binary_top2)
     principal_mask = normalize_mask(principal_mask)
@@ -544,15 +541,15 @@ def gap_rescue_after_secondary(
 
 
 def draw_gap_rescue_debug(
-        crop,
-        principal_mask,
-        secondary_mask,
-        rescue_mask,
-        roi_mask,
-        candidate_mask,
-        accepted_mask,
-        rejected_mask,
-        traveler_points=None,
+    crop,
+    principal_mask,
+    secondary_mask,
+    rescue_mask,
+    roi_mask,
+    candidate_mask,
+    accepted_mask,
+    rejected_mask,
+    traveler_points=None,
 ):
     result = to_bgr(crop)
 
@@ -577,10 +574,11 @@ def draw_gap_merged_debug(crop, merged_mask, traveler_points=None):
 
     return result
 
+
 def filter_floating_right_gap_rescue(
-        gap_rescue_mask,
-        principal_after_horizontal_mask,
-        secondary_mask_normal,
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
 ):
     if not GAP_FLOATING_RIGHT_GUARD_ENABLE:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
@@ -588,7 +586,10 @@ def filter_floating_right_gap_rescue(
     if gap_rescue_mask is None or principal_after_horizontal_mask is None:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
-    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+    if (
+        mask_area(gap_rescue_mask) == 0
+        or mask_area(principal_after_horizontal_mask) == 0
+    ):
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
     principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
@@ -619,27 +620,32 @@ def filter_floating_right_gap_rescue(
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
 
-        x2 = x + width - 1
-        y2 = y + height - 1
+        x + width - 1
+        y + height - 1
         component_median_y = float(centroids[label][1])
         component_pixels = labels == label
 
         right_gap_from_principal = x - principal_bounds["max_x"] - 1
 
         size_matches = (
-                area >= GAP_FLOATING_RIGHT_MIN_AREA
-                and area <= GAP_FLOATING_RIGHT_MAX_AREA
-                and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
-                and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
-                and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
+            area >= GAP_FLOATING_RIGHT_MIN_AREA
+            and area <= GAP_FLOATING_RIGHT_MAX_AREA
+            and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
+            and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
+            and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
         )
 
         is_right_of_principal = (
-                right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+            right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
         )
 
-        y1_support = max(0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND)
-        y2_support = min(height_img, int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1)
+        y1_support = max(
+            0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND
+        )
+        y2_support = min(
+            height_img,
+            int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1,
+        )
         x1_support = max(0, x - GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW)
         x2_support = max(0, x)
 
@@ -647,11 +653,13 @@ def filter_floating_right_gap_rescue(
 
         if x2_support > x1_support and y2_support > y1_support:
             left_support_pixels = int(
-                np.count_nonzero(support_mask[y1_support:y2_support, x1_support:x2_support] > 0)
+                np.count_nonzero(
+                    support_mask[y1_support:y2_support, x1_support:x2_support] > 0
+                )
             )
 
         lacks_local_left_support = (
-                left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
+            left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
         )
 
         if size_matches and is_right_of_principal and lacks_local_left_support:
@@ -661,10 +669,11 @@ def filter_floating_right_gap_rescue(
 
     return kept, removed
 
+
 def filter_upper_right_gap_rescue(
-        gap_rescue_mask,
-        principal_after_horizontal_mask,
-        secondary_mask_normal,
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
 ):
     if not GAP_UPPER_RIGHT_GUARD_ENABLE:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
@@ -672,7 +681,10 @@ def filter_upper_right_gap_rescue(
     if gap_rescue_mask is None or principal_after_horizontal_mask is None:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
-    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+    if (
+        mask_area(gap_rescue_mask) == 0
+        or mask_area(principal_after_horizontal_mask) == 0
+    ):
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
     principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
@@ -699,7 +711,7 @@ def filter_upper_right_gap_rescue(
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
+        int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         component_pixels = labels == label
@@ -708,15 +720,15 @@ def filter_upper_right_gap_rescue(
         right_gap_from_principal = x - principal_bounds["max_x"] - 1
 
         size_matches = (
-                area >= GAP_UPPER_RIGHT_MIN_AREA
-                and area <= GAP_UPPER_RIGHT_MAX_AREA
-                and width >= GAP_UPPER_RIGHT_MIN_WIDTH
-                and width <= GAP_UPPER_RIGHT_MAX_WIDTH
-                and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
+            area >= GAP_UPPER_RIGHT_MIN_AREA
+            and area <= GAP_UPPER_RIGHT_MAX_AREA
+            and width >= GAP_UPPER_RIGHT_MIN_WIDTH
+            and width <= GAP_UPPER_RIGHT_MAX_WIDTH
+            and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
         )
 
         is_right_of_principal = (
-                right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+            right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
         )
 
         x1_context = max(0, x - GAP_UPPER_RIGHT_CONTEXT_WINDOW)
@@ -733,11 +745,17 @@ def filter_upper_right_gap_rescue(
             local_reference_y = None
 
         is_much_above_local_direction = (
-                local_reference_y is not None
-                and component_median_y <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
+            local_reference_y is not None
+            and component_median_y
+            <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
         )
 
-        if size_matches and is_right_of_principal and has_context and is_much_above_local_direction:
+        if (
+            size_matches
+            and is_right_of_principal
+            and has_context
+            and is_much_above_local_direction
+        ):
             removed[component_pixels] = 255
         else:
             kept[component_pixels] = 255

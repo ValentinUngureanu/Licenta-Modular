@@ -1,5 +1,6 @@
-import shutil
 import re
+import shutil
+
 import cv2
 import numpy as np
 
@@ -14,18 +15,18 @@ from final_contour import (
     project_mask_to_original,
     remove_very_small_components,
 )
+from gap_rescue import (
+    draw_gap_rescue_debug,
+    filter_floating_right_gap_rescue,
+    filter_upper_right_gap_rescue,
+    gap_rescue_after_secondary,
+)
 from horizontal_rescue import (
     draw_horizontal_rescue_debug,
     filter_floating_upper_horizontal_strip,
     filter_layered_horizontal_tail,
     filter_right_isolated_horizontal_component,
     run_guarded_horizontal_rescue,
-)
-from gap_rescue import (
-    draw_gap_rescue_debug,
-    filter_floating_right_gap_rescue,
-    filter_upper_right_gap_rescue,
-    gap_rescue_after_secondary,
 )
 from image_io import (
     ensure_dir,
@@ -35,11 +36,17 @@ from image_io import (
     read_image_bgr,
     save_image,
 )
+from postprocessing import (
+    draw_artifact_source_overlay,
+    filter_left_low_far_artifact_components,
+    filter_principal_tail_under_horizontal,
+    mask_area,
+    merge_masks,
+)
 from preprocessing import preprocess_crop
 from principal_component import (
     build_principal_component,
     draw_principal_component,
-
 )
 from principal_selector import (
     draw_principal_selector_debug,
@@ -56,7 +63,11 @@ from secondary_component import (
 )
 from secondary_rescue import (
     draw_merged_after_rescue as draw_secondary_rescue_merged_debug,
+)
+from secondary_rescue import (
     draw_rescue_debug as draw_secondary_rescue_debug,
+)
+from secondary_rescue import (
     filter_right_isolated_secondary_rescue,
     run_guarded_secondary_rescue,
 )
@@ -77,7 +88,9 @@ SECONDARY_ROI_DIR = FINAL_TEST_DIR / "08_SECONDARY_SEARCH_ROI_TOP2"
 SECONDARY_CANDIDATES_DIR = FINAL_TEST_DIR / "09_SECONDARY_TOP2_CANDIDATES_IN_ROI"
 SECONDARY_DIR = FINAL_TEST_DIR / "10_PRINCIPAL_HORIZONTAL_SECONDARY_COMPONENTS"
 GAP_RESCUE_DIR = FINAL_TEST_DIR / "11_GAP_RESCUE_AFTER_SECONDARY"
-MERGED_BEFORE_SECONDARY_RESCUE_DIR = FINAL_TEST_DIR / "12_MERGED_BEFORE_SECONDARY_RESCUE"
+MERGED_BEFORE_SECONDARY_RESCUE_DIR = (
+    FINAL_TEST_DIR / "12_MERGED_BEFORE_SECONDARY_RESCUE"
+)
 SECONDARY_RESCUE_DIR = FINAL_TEST_DIR / "13_SECONDARY_RESCUE_AFTER_SECONDARY"
 MERGED_FINAL_DIR = FINAL_TEST_DIR / "14_MERGED_FINAL_AFTER_ALL_RESCUES"
 SMALL_COMPONENT_CLEAN_DIR = FINAL_TEST_DIR / "14B_SMALL_COMPONENT_CLEAN"
@@ -88,14 +101,6 @@ FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
-
-from postprocessing import (
-    draw_artifact_source_overlay,
-    filter_left_low_far_artifact_components,
-    filter_principal_tail_under_horizontal,
-    mask_area,
-    merge_masks,
-)
 
 
 def process_image(index: int, current: int, total: int) -> None:
@@ -134,9 +139,11 @@ def process_image(index: int, current: int, total: int) -> None:
     )
     principal_mask = principal_selector_result["principal_mask"]
 
-    principal_mask, left_low_principal_removed_mask = filter_left_low_far_artifact_components(
-        principal_mask,
-        principal_mask,
+    principal_mask, left_low_principal_removed_mask = (
+        filter_left_low_far_artifact_components(
+            principal_mask,
+            principal_mask,
+        )
     )
 
     if mask_area(left_low_principal_removed_mask) > 0:
@@ -157,19 +164,25 @@ def process_image(index: int, current: int, total: int) -> None:
     horizontal_candidate_mask = horizontal_result["candidate_mask"]
     horizontal_rejected_mask = horizontal_result["rejected_mask"]
 
-    horizontal_rescue_mask, horizontal_layered_tail_removed_mask = filter_layered_horizontal_tail(
-        horizontal_rescue_mask,
-        principal_mask,
+    horizontal_rescue_mask, horizontal_layered_tail_removed_mask = (
+        filter_layered_horizontal_tail(
+            horizontal_rescue_mask,
+            principal_mask,
+        )
     )
 
-    horizontal_rescue_mask, horizontal_floating_strip_removed_mask = filter_floating_upper_horizontal_strip(
-        horizontal_rescue_mask,
-        principal_mask,
+    horizontal_rescue_mask, horizontal_floating_strip_removed_mask = (
+        filter_floating_upper_horizontal_strip(
+            horizontal_rescue_mask,
+            principal_mask,
+        )
     )
 
-    horizontal_rescue_mask, horizontal_right_isolated_removed_mask = filter_right_isolated_horizontal_component(
-        horizontal_rescue_mask,
-        principal_mask,
+    horizontal_rescue_mask, horizontal_right_isolated_removed_mask = (
+        filter_right_isolated_horizontal_component(
+            horizontal_rescue_mask,
+            principal_mask,
+        )
     )
 
     horizontal_removed_mask = merge_masks(
@@ -181,7 +194,6 @@ def process_image(index: int, current: int, total: int) -> None:
         horizontal_right_isolated_removed_mask,
     )
 
-
     horizontal_accepted_mask = horizontal_rescue_mask
     horizontal_rejected_mask = merge_masks(
         horizontal_rejected_mask,
@@ -192,9 +204,11 @@ def process_image(index: int, current: int, total: int) -> None:
         binary_top2_guarded = binary_top2_guarded.copy()
         binary_top2_guarded[horizontal_removed_mask > 0] = 0
 
-    principal_mask, principal_under_horizontal_removed_mask = filter_principal_tail_under_horizontal(
-        principal_mask,
-        horizontal_rescue_mask,
+    principal_mask, principal_under_horizontal_removed_mask = (
+        filter_principal_tail_under_horizontal(
+            principal_mask,
+            horizontal_rescue_mask,
+        )
     )
 
     if mask_area(principal_under_horizontal_removed_mask) > 0:
@@ -223,19 +237,25 @@ def process_image(index: int, current: int, total: int) -> None:
     secondary_candidate_mask = secondary_result["candidate_mask"]
     secondary_rejected_mask = secondary_result["rejected_mask"]
 
-    secondary_mask_normal, secondary_tail_after_horizontal_removed_mask = filter_secondary_tail_after_horizontal(
-        secondary_mask_normal,
-        horizontal_rescue_mask,
+    secondary_mask_normal, secondary_tail_after_horizontal_removed_mask = (
+        filter_secondary_tail_after_horizontal(
+            secondary_mask_normal,
+            horizontal_rescue_mask,
+        )
     )
 
-    secondary_mask_normal, secondary_floating_readd_removed_mask = filter_secondary_floating_strip_after_horizontal_reject(
-        secondary_mask_normal,
-        principal_mask,
+    secondary_mask_normal, secondary_floating_readd_removed_mask = (
+        filter_secondary_floating_strip_after_horizontal_reject(
+            secondary_mask_normal,
+            principal_mask,
+        )
     )
 
-    secondary_mask_normal, left_low_secondary_removed_mask = filter_left_low_far_artifact_components(
-        secondary_mask_normal,
-        principal_mask,
+    secondary_mask_normal, left_low_secondary_removed_mask = (
+        filter_left_low_far_artifact_components(
+            secondary_mask_normal,
+            principal_mask,
+        )
     )
 
     secondary_total_removed_mask = merge_masks(
@@ -292,14 +312,18 @@ def process_image(index: int, current: int, total: int) -> None:
     secondary_mask_before_rescue[secondary_mask_normal > 0] = 255
     secondary_mask_before_rescue[gap_rescue_mask > 0] = 255
 
-    secondary_mask_before_rescue, combined_secondary_gap_removed_mask = filter_secondary_floating_strip_after_horizontal_reject(
-        secondary_mask_before_rescue,
-        principal_mask,
+    secondary_mask_before_rescue, combined_secondary_gap_removed_mask = (
+        filter_secondary_floating_strip_after_horizontal_reject(
+            secondary_mask_before_rescue,
+            principal_mask,
+        )
     )
 
-    secondary_mask_before_rescue, left_low_combined_removed_mask = filter_left_low_far_artifact_components(
-        secondary_mask_before_rescue,
-        principal_mask,
+    secondary_mask_before_rescue, left_low_combined_removed_mask = (
+        filter_left_low_far_artifact_components(
+            secondary_mask_before_rescue,
+            principal_mask,
+        )
     )
 
     combined_secondary_gap_removed_mask = merge_masks(
@@ -311,7 +335,9 @@ def process_image(index: int, current: int, total: int) -> None:
         binary_top2_guarded = binary_top2_guarded.copy()
         binary_top2_guarded[combined_secondary_gap_removed_mask > 0] = 0
 
-    merged_before_secondary_rescue = np.zeros_like(principal_after_horizontal_mask, dtype=np.uint8)
+    merged_before_secondary_rescue = np.zeros_like(
+        principal_after_horizontal_mask, dtype=np.uint8
+    )
     merged_before_secondary_rescue[principal_after_horizontal_mask > 0] = 255
     merged_before_secondary_rescue[secondary_mask_before_rescue > 0] = 255
 
@@ -336,17 +362,23 @@ def process_image(index: int, current: int, total: int) -> None:
     secondary_mask_after_rescue = secondary_rescue_result["secondary_mask"]
     secondary_rescue_mask_raw = secondary_rescue_result["rescue_mask"]
 
-    secondary_rescue_mask, right_isolated_rescue_removed_mask = filter_right_isolated_secondary_rescue(
-        secondary_rescue_mask_raw,
-        merged_before_secondary_rescue,
+    secondary_rescue_mask, right_isolated_rescue_removed_mask = (
+        filter_right_isolated_secondary_rescue(
+            secondary_rescue_mask_raw,
+            merged_before_secondary_rescue,
+        )
     )
 
-    secondary_rescue_mask, left_low_secondary_rescue_removed_mask = filter_left_low_far_artifact_components(
-        secondary_rescue_mask,
-        principal_mask,
+    secondary_rescue_mask, left_low_secondary_rescue_removed_mask = (
+        filter_left_low_far_artifact_components(
+            secondary_rescue_mask,
+            principal_mask,
+        )
     )
 
-    merged_final_mask_before_small_clean = np.zeros_like(merged_before_secondary_rescue, dtype=np.uint8)
+    merged_final_mask_before_small_clean = np.zeros_like(
+        merged_before_secondary_rescue, dtype=np.uint8
+    )
     merged_final_mask_before_small_clean[merged_before_secondary_rescue > 0] = 255
     merged_final_mask_before_small_clean[secondary_rescue_mask > 0] = 255
 
@@ -378,7 +410,6 @@ def process_image(index: int, current: int, total: int) -> None:
         added_component_ids,
     )
 
-
     principal_debug = draw_principal_component(
         crop,
         principal_mask,
@@ -403,7 +434,6 @@ def process_image(index: int, current: int, total: int) -> None:
         horizontal_rejected_mask,
         traveler_points=extended_points,
     )
-
 
     secondary_roi_debug = draw_secondary_roi(
         crop,
@@ -512,33 +542,92 @@ def process_image(index: int, current: int, total: int) -> None:
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
     save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)
     save_image(BINARY_TOP1_DIR / make_output_name(index, "binary_top1"), binary_top1)
-    save_image(BINARY_TOP2_DIR / make_output_name(index, "binary_top2_secondary_search"), binary_top2)
-    save_image(TRAVELER_DIR / make_output_name(index, "extended_traveler"), traveler_debug)
-    save_image(PRINCIPAL_DIR / make_output_name(index, "principal_component"), principal_debug)
-    save_image(PRINCIPAL_SELECTOR_DIR / make_output_name(index, "principal_selector"), principal_selector_debug)
-    save_image(HORIZONTAL_RESCUE_DIR / make_output_name(index, "horizontal_rescue_before_secondary"),
-               horizontal_rescue_debug)
-    save_image(BINARY_TOP2_GUARDED_DIR / make_output_name(index, "binary_top2_guarded_for_secondary"),
-               binary_top2_guarded)
-    save_image(SECONDARY_ROI_DIR / make_output_name(index, "secondary_search_roi_top2"), secondary_roi_debug)
-    save_image(SECONDARY_CANDIDATES_DIR / make_output_name(index, "secondary_top2_candidates_in_roi"),
-               secondary_candidates_debug)
-    save_image(SECONDARY_DIR / make_output_name(index, "principal_horizontal_secondary_components"), secondary_debug)
-    save_image(GAP_RESCUE_DIR / make_output_name(index, "gap_rescue_after_secondary"), gap_rescue_debug)
-    save_image(MERGED_BEFORE_SECONDARY_RESCUE_DIR / make_output_name(index, "merged_before_secondary_rescue"),
-               merged_before_secondary_rescue_debug)
-    save_image(SECONDARY_RESCUE_DIR / make_output_name(index, "secondary_rescue_after_secondary"),
-               secondary_rescue_debug)
-    save_image(MERGED_FINAL_DIR / make_output_name(index, "merged_final_after_all_rescues"), merged_final_debug)
-    save_image(SMALL_COMPONENT_CLEAN_DIR / make_output_name(index, "small_component_clean"),
-               small_component_clean_debug)
-    save_image(SOURCE_ORIGIN_DEBUG_DIR / make_output_name(index, "source_origin_debug"), source_origin_debug)
-    save_image(FINAL_MASK_CROP_DIR / make_output_name(index, "final_mask_on_crop"), final_mask_crop_debug)
-    save_image(FINAL_CONTOUR_CROP_DIR / make_output_name(index, "final_contour_on_crop"), final_contour_crop_debug)
-    save_image(FINAL_MASK_ORIGINAL_DIR / make_output_name(index, "final_mask_on_original"), final_mask_original_debug)
-    save_image(FINAL_CONTOUR_ORIGINAL_DIR / make_output_name(index, "final_contour_on_original"),
-               final_contour_original_debug)
-    save_image(FINAL_BINARY_ORIGINAL_DIR / make_output_name(index, "final_binary_mask_original"), final_binary_original)
+    save_image(
+        BINARY_TOP2_DIR / make_output_name(index, "binary_top2_secondary_search"),
+        binary_top2,
+    )
+    save_image(
+        TRAVELER_DIR / make_output_name(index, "extended_traveler"), traveler_debug
+    )
+    save_image(
+        PRINCIPAL_DIR / make_output_name(index, "principal_component"), principal_debug
+    )
+    save_image(
+        PRINCIPAL_SELECTOR_DIR / make_output_name(index, "principal_selector"),
+        principal_selector_debug,
+    )
+    save_image(
+        HORIZONTAL_RESCUE_DIR
+        / make_output_name(index, "horizontal_rescue_before_secondary"),
+        horizontal_rescue_debug,
+    )
+    save_image(
+        BINARY_TOP2_GUARDED_DIR
+        / make_output_name(index, "binary_top2_guarded_for_secondary"),
+        binary_top2_guarded,
+    )
+    save_image(
+        SECONDARY_ROI_DIR / make_output_name(index, "secondary_search_roi_top2"),
+        secondary_roi_debug,
+    )
+    save_image(
+        SECONDARY_CANDIDATES_DIR
+        / make_output_name(index, "secondary_top2_candidates_in_roi"),
+        secondary_candidates_debug,
+    )
+    save_image(
+        SECONDARY_DIR
+        / make_output_name(index, "principal_horizontal_secondary_components"),
+        secondary_debug,
+    )
+    save_image(
+        GAP_RESCUE_DIR / make_output_name(index, "gap_rescue_after_secondary"),
+        gap_rescue_debug,
+    )
+    save_image(
+        MERGED_BEFORE_SECONDARY_RESCUE_DIR
+        / make_output_name(index, "merged_before_secondary_rescue"),
+        merged_before_secondary_rescue_debug,
+    )
+    save_image(
+        SECONDARY_RESCUE_DIR
+        / make_output_name(index, "secondary_rescue_after_secondary"),
+        secondary_rescue_debug,
+    )
+    save_image(
+        MERGED_FINAL_DIR / make_output_name(index, "merged_final_after_all_rescues"),
+        merged_final_debug,
+    )
+    save_image(
+        SMALL_COMPONENT_CLEAN_DIR / make_output_name(index, "small_component_clean"),
+        small_component_clean_debug,
+    )
+    save_image(
+        SOURCE_ORIGIN_DEBUG_DIR / make_output_name(index, "source_origin_debug"),
+        source_origin_debug,
+    )
+    save_image(
+        FINAL_MASK_CROP_DIR / make_output_name(index, "final_mask_on_crop"),
+        final_mask_crop_debug,
+    )
+    save_image(
+        FINAL_CONTOUR_CROP_DIR / make_output_name(index, "final_contour_on_crop"),
+        final_contour_crop_debug,
+    )
+    save_image(
+        FINAL_MASK_ORIGINAL_DIR / make_output_name(index, "final_mask_on_original"),
+        final_mask_original_debug,
+    )
+    save_image(
+        FINAL_CONTOUR_ORIGINAL_DIR
+        / make_output_name(index, "final_contour_on_original"),
+        final_contour_original_debug,
+    )
+    save_image(
+        FINAL_BINARY_ORIGINAL_DIR
+        / make_output_name(index, "final_binary_mask_original"),
+        final_binary_original,
+    )
 
 
 def reset_dir(path):
@@ -554,7 +643,9 @@ def make_final_contours_contact_sheet(exclude_indices=None):
 
     image_paths = []
 
-    for path in sorted(FINAL_CONTOUR_ORIGINAL_DIR.glob("*_final_contour_on_original.png")):
+    for path in sorted(
+        FINAL_CONTOUR_ORIGINAL_DIR.glob("*_final_contour_on_original.png")
+    ):
         match = re.match(r"(\d+)_", path.name)
 
         if match is None:
@@ -587,13 +678,15 @@ def make_final_contours_contact_sheet(exclude_indices=None):
         new_width = max(1, int(width * scale))
         new_height = max(1, int(height * scale))
 
-        resized = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        resized = cv2.resize(
+            image, (new_width, new_height), interpolation=cv2.INTER_AREA
+        )
 
         tile = np.zeros((tile_height + label_height, tile_width, 3), dtype=np.uint8)
 
         y0 = label_height + (tile_height - new_height) // 2
         x0 = (tile_width - new_width) // 2
-        tile[y0:y0 + new_height, x0:x0 + new_width] = resized
+        tile[y0 : y0 + new_height, x0 : x0 + new_width] = resized
 
         cv2.putText(
             tile,
@@ -625,7 +718,7 @@ def make_final_contours_contact_sheet(exclude_indices=None):
         y0 = row * (tile_height + label_height)
         x0 = col * tile_width
 
-        sheet[y0:y0 + tile.shape[0], x0:x0 + tile.shape[1]] = tile
+        sheet[y0 : y0 + tile.shape[0], x0 : x0 + tile.shape[1]] = tile
 
     save_image(REST_CONTACT_SHEET_PATH, sheet)
 

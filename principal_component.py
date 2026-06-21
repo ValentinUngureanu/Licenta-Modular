@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 ROI_COLOR = (255, 0, 0)
 CANDIDATE_COLOR = (0, 255, 255)
 PRINCIPAL_COLOR = (0, 255, 0)
@@ -50,6 +49,7 @@ def fit_principal_model(traveler_points, image_shape):
     _, width = image_shape[:2]
 
     if traveler_points is None or len(traveler_points) == 0:
+
         def predict_empty(x_values):
             x_values = np.asarray(x_values, dtype=np.float32)
             return np.zeros_like(x_values, dtype=np.float32)
@@ -167,7 +167,7 @@ def build_principal_roi_mask(binary_mask, traveler_points):
     xs = np.arange(x1, x2 + 1, dtype=np.float32)
     ys = predict(xs)
 
-    for x, center_y in zip(xs.astype(np.int32), ys):
+    for x, center_y in zip(xs.astype(np.int32), ys, strict=False):
         cy = int(round(center_y))
         top = max(0, cy - half_height)
         bottom = min(height, cy + half_height + 1)
@@ -403,10 +403,9 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     color_array = np.array(color, dtype=np.float32)
     result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
-    )
+    result_float[mask_bool] = (1.0 - alpha) * result_float[
+        mask_bool
+    ] + alpha * color_array
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
 

@@ -113,8 +113,8 @@ def should_accept_horizontal_rescue(horizontal_result, principal_mask) -> bool:
         return False
 
     if (
-            left_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
-            and right_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
+        left_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
+        and right_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
     ):
         return False
 
@@ -145,12 +145,11 @@ def should_accept_horizontal_rescue(horizontal_result, principal_mask) -> bool:
     return True
 
 
-
 def should_accept_secondary_rescue(
-        principal_mask,
-        secondary_mask_before_rescue,
-        merged_before_rescue,
-        secondary_rescue_result,
+    principal_mask,
+    secondary_mask_before_rescue,
+    merged_before_rescue,
+    secondary_rescue_result,
 ) -> bool:
     principal_area = mask_area(principal_mask)
     secondary_before_area = mask_area(secondary_mask_before_rescue)
@@ -169,13 +168,15 @@ def should_accept_secondary_rescue(
     secondary_before_density = mask_density(secondary_mask_before_rescue)
 
     overgrown_secondary = (
-            secondary_before_area >= SECONDARY_RESCUE_OVERGROWTH_MIN_AREA
-            and secondary_before_area > SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO * principal_area
-            and secondary_before_bounds is not None
-            and (
-                    secondary_before_density >= SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY
-                    or secondary_before_bounds["height"] >= SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT
-            )
+        secondary_before_area >= SECONDARY_RESCUE_OVERGROWTH_MIN_AREA
+        and secondary_before_area
+        > SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO * principal_area
+        and secondary_before_bounds is not None
+        and (
+            secondary_before_density >= SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY
+            or secondary_before_bounds["height"]
+            >= SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT
+        )
     )
 
     if overgrown_secondary:
@@ -244,11 +245,11 @@ def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
+        int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
 
-        x2 = x + width - 1
+        x + width - 1
         component_median_y = float(centroids[label][1])
         component_pixels = labels == label
 
@@ -257,13 +258,14 @@ def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
         is_right_isolated = right_gap >= RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX
 
         is_small_enough = (
-                area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
-                and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
-                and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
+            area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
+            and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
+            and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
         )
 
         is_much_lower = (
-                component_median_y >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
+            component_median_y
+            >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
         )
 
         if is_right_isolated and is_small_enough and is_much_lower:
@@ -298,9 +300,9 @@ GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX = 35
 
 
 def filter_upper_right_gap_rescue(
-        gap_rescue_mask,
-        principal_after_horizontal_mask,
-        secondary_mask_normal,
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
 ):
     if not GAP_UPPER_RIGHT_GUARD_ENABLE:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
@@ -308,7 +310,10 @@ def filter_upper_right_gap_rescue(
     if gap_rescue_mask is None or principal_after_horizontal_mask is None:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
-    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+    if (
+        mask_area(gap_rescue_mask) == 0
+        or mask_area(principal_after_horizontal_mask) == 0
+    ):
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
     principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
@@ -335,7 +340,7 @@ def filter_upper_right_gap_rescue(
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
+        int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         component_pixels = labels == label
@@ -344,15 +349,15 @@ def filter_upper_right_gap_rescue(
         right_gap_from_principal = x - principal_bounds["max_x"] - 1
 
         size_matches = (
-                area >= GAP_UPPER_RIGHT_MIN_AREA
-                and area <= GAP_UPPER_RIGHT_MAX_AREA
-                and width >= GAP_UPPER_RIGHT_MIN_WIDTH
-                and width <= GAP_UPPER_RIGHT_MAX_WIDTH
-                and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
+            area >= GAP_UPPER_RIGHT_MIN_AREA
+            and area <= GAP_UPPER_RIGHT_MAX_AREA
+            and width >= GAP_UPPER_RIGHT_MIN_WIDTH
+            and width <= GAP_UPPER_RIGHT_MAX_WIDTH
+            and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
         )
 
         is_right_of_principal = (
-                right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+            right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
         )
 
         x1_context = max(0, x - GAP_UPPER_RIGHT_CONTEXT_WINDOW)
@@ -369,11 +374,17 @@ def filter_upper_right_gap_rescue(
             local_reference_y = None
 
         is_much_above_local_direction = (
-                local_reference_y is not None
-                and component_median_y <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
+            local_reference_y is not None
+            and component_median_y
+            <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
         )
 
-        if size_matches and is_right_of_principal and has_context and is_much_above_local_direction:
+        if (
+            size_matches
+            and is_right_of_principal
+            and has_context
+            and is_much_above_local_direction
+        ):
             removed[component_pixels] = 255
         else:
             kept[component_pixels] = 255
@@ -382,9 +393,9 @@ def filter_upper_right_gap_rescue(
 
 
 def filter_floating_right_gap_rescue(
-        gap_rescue_mask,
-        principal_after_horizontal_mask,
-        secondary_mask_normal,
+    gap_rescue_mask,
+    principal_after_horizontal_mask,
+    secondary_mask_normal,
 ):
     if not GAP_FLOATING_RIGHT_GUARD_ENABLE:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
@@ -392,7 +403,10 @@ def filter_floating_right_gap_rescue(
     if gap_rescue_mask is None or principal_after_horizontal_mask is None:
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
-    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+    if (
+        mask_area(gap_rescue_mask) == 0
+        or mask_area(principal_after_horizontal_mask) == 0
+    ):
         return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
 
     principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
@@ -423,27 +437,32 @@ def filter_floating_right_gap_rescue(
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
 
-        x2 = x + width - 1
-        y2 = y + height - 1
+        x + width - 1
+        y + height - 1
         component_median_y = float(centroids[label][1])
         component_pixels = labels == label
 
         right_gap_from_principal = x - principal_bounds["max_x"] - 1
 
         size_matches = (
-                area >= GAP_FLOATING_RIGHT_MIN_AREA
-                and area <= GAP_FLOATING_RIGHT_MAX_AREA
-                and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
-                and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
-                and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
+            area >= GAP_FLOATING_RIGHT_MIN_AREA
+            and area <= GAP_FLOATING_RIGHT_MAX_AREA
+            and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
+            and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
+            and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
         )
 
         is_right_of_principal = (
-                right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+            right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
         )
 
-        y1_support = max(0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND)
-        y2_support = min(height_img, int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1)
+        y1_support = max(
+            0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND
+        )
+        y2_support = min(
+            height_img,
+            int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1,
+        )
         x1_support = max(0, x - GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW)
         x2_support = max(0, x)
 
@@ -451,11 +470,13 @@ def filter_floating_right_gap_rescue(
 
         if x2_support > x1_support and y2_support > y1_support:
             left_support_pixels = int(
-                np.count_nonzero(support_mask[y1_support:y2_support, x1_support:x2_support] > 0)
+                np.count_nonzero(
+                    support_mask[y1_support:y2_support, x1_support:x2_support] > 0
+                )
             )
 
         lacks_local_left_support = (
-                left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
+            left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
         )
 
         if size_matches and is_right_of_principal and lacks_local_left_support:
@@ -525,28 +546,31 @@ def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
         x2 = x + width - 1
         y2 = y + height - 1
 
-        components.append({
-            "label": label,
-            "area": area,
-            "x": x,
-            "y": y,
-            "x2": x2,
-            "y2": y2,
-            "width": width,
-            "height": height,
-            "centroid_y": float(centroids[label][1]),
-        })
+        components.append(
+            {
+                "label": label,
+                "area": area,
+                "x": x,
+                "y": y,
+                "x2": x2,
+                "y2": y2,
+                "width": width,
+                "height": height,
+                "centroid_y": float(centroids[label][1]),
+            }
+        )
 
     upper_candidates = []
 
     for component in components:
         is_upper_shape = (
-                component["area"] >= HORIZONTAL_LAYERED_TAIL_MIN_UPPER_AREA
-                and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_UPPER_HEIGHT
+            component["area"] >= HORIZONTAL_LAYERED_TAIL_MIN_UPPER_AREA
+            and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_UPPER_HEIGHT
         )
 
         is_near_right_end_of_principal = (
-                component["x2"] >= principal_bounds["max_x"] + HORIZONTAL_LAYERED_TAIL_MIN_RIGHT_REGION_GAIN
+            component["x2"]
+            >= principal_bounds["max_x"] + HORIZONTAL_LAYERED_TAIL_MIN_RIGHT_REGION_GAIN
         )
 
         if is_upper_shape and is_near_right_end_of_principal:
@@ -568,12 +592,13 @@ def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
             continue
 
         is_lower_than_upper = (
-                component["centroid_y"] >= upper["centroid_y"] + HORIZONTAL_LAYERED_TAIL_MIN_Y_GAP
+            component["centroid_y"]
+            >= upper["centroid_y"] + HORIZONTAL_LAYERED_TAIL_MIN_Y_GAP
         )
 
         is_small_or_medium_tail = (
-                component["area"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_AREA
-                and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_HEIGHT
+            component["area"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_AREA
+            and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_HEIGHT
         )
 
         overlap_frac = x_overlap_fraction(component, upper)
@@ -583,14 +608,14 @@ def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
         right_gap_from_upper = component["x"] - upper["x2"] - 1
 
         is_right_tail_after_upper = (
-                right_gap_from_upper >= 0
-                and right_gap_from_upper <= HORIZONTAL_LAYERED_TAIL_MAX_RIGHT_GAP_FROM_UPPER
+            right_gap_from_upper >= 0
+            and right_gap_from_upper <= HORIZONTAL_LAYERED_TAIL_MAX_RIGHT_GAP_FROM_UPPER
         )
 
         if (
-                is_lower_than_upper
-                and is_small_or_medium_tail
-                and (overlaps_upper or is_right_tail_after_upper)
+            is_lower_than_upper
+            and is_small_or_medium_tail
+            and (overlaps_upper or is_right_tail_after_upper)
         ):
             removed[pixels] = 255
         else:
@@ -654,16 +679,18 @@ def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal
         x2 = x + width - 1
         y2 = y + height - 1
 
-        components.append({
-            "label": label,
-            "area": area,
-            "x": x,
-            "x2": x2,
-            "y": y,
-            "y2": y2,
-            "width": width,
-            "height": height,
-        })
+        components.append(
+            {
+                "label": label,
+                "area": area,
+                "x": x,
+                "x2": x2,
+                "y": y,
+                "y2": y2,
+                "width": width,
+                "height": height,
+            }
+        )
 
     main_component = max(components, key=lambda item: item["area"])
 
@@ -685,12 +712,12 @@ def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal
         gap_from_main = component["x"] - main_component["x2"]
 
         is_small_right_isolated = (
-                component["area"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_AREA
-                and component["width"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH
-                and component["height"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT
-                and right_gain >= RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN
-                and gap_from_main >= RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN
-                and component["y"] >= RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y
+            component["area"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_AREA
+            and component["width"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH
+            and component["height"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT
+            and right_gain >= RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN
+            and gap_from_main >= RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN
+            and component["y"] >= RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y
         )
 
         if is_small_right_isolated:
@@ -771,8 +798,8 @@ def filter_left_low_far_artifact_components(mask, reference_mask):
         return mask, empty_mask_like(mask)
 
     if (
-            reference_main["area"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_AREA
-            or reference_main["min_x"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_X
+        reference_main["area"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_AREA
+        or reference_main["min_x"] < LEFT_LOW_FAR_ARTIFACT_MIN_MAIN_X
     ):
         return mask, empty_mask_like(mask)
 
@@ -796,22 +823,24 @@ def filter_left_low_far_artifact_components(mask, reference_mask):
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         x2 = x + width - 1
-        y2 = y + height - 1
+        y + height - 1
         component_cy = float(centroids[label][1])
 
         far_left_from_main = (
-                x2 <= reference_main["min_x"] - LEFT_LOW_FAR_ARTIFACT_MIN_GAP_FROM_MAIN
+            x2 <= reference_main["min_x"] - LEFT_LOW_FAR_ARTIFACT_MIN_GAP_FROM_MAIN
         )
 
         much_lower_than_main = (
-                component_cy >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
-                or y >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
+            component_cy
+            >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
+            or y
+            >= reference_main["centroid_y"] + LEFT_LOW_FAR_ARTIFACT_MIN_BELOW_MAIN_CY
         )
 
         size_matches = (
-                area <= LEFT_LOW_FAR_ARTIFACT_MAX_AREA
-                and width <= LEFT_LOW_FAR_ARTIFACT_MAX_WIDTH
-                and height <= LEFT_LOW_FAR_ARTIFACT_MAX_HEIGHT
+            area <= LEFT_LOW_FAR_ARTIFACT_MAX_AREA
+            and width <= LEFT_LOW_FAR_ARTIFACT_MAX_WIDTH
+            and height <= LEFT_LOW_FAR_ARTIFACT_MAX_HEIGHT
         )
 
         if size_matches and far_left_from_main and much_lower_than_main:
@@ -823,8 +852,8 @@ def filter_left_low_far_artifact_components(mask, reference_mask):
 
 
 def filter_secondary_tail_after_horizontal(
-        secondary_mask,
-        horizontal_rescue_mask,
+    secondary_mask,
+    horizontal_rescue_mask,
 ):
     if not SECONDARY_AFTER_HORIZONTAL_TAIL_GUARD_ENABLE:
         return secondary_mask, empty_mask_like(secondary_mask)
@@ -858,25 +887,32 @@ def filter_secondary_tail_after_horizontal(
         y = int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
-        x2 = x + width - 1
+        x + width - 1
         y2 = y + height - 1
 
         component_pixels = labels == label
         component_median_y = float(centroids[label][1])
 
         is_small_tail = (
-                area <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA
-                and width <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH
-                and height <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT
+            area <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA
+            and width <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH
+            and height <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT
         )
 
         starts_after_horizontal_end = (
-                x >= horizontal_bounds["max_x"] + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP
+            x
+            >= horizontal_bounds["max_x"]
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP
         )
 
         is_far_below_horizontal = (
-                component_median_y >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
-                or y2 >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX + 8
+            component_median_y
+            >= horizontal_median_y
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
+            or y2
+            >= horizontal_median_y
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
+            + 8
         )
 
         vertical_overlap_top = max(y, horizontal_bounds["min_y"])
@@ -884,31 +920,22 @@ def filter_secondary_tail_after_horizontal(
         vertical_overlap = max(0, vertical_overlap_bottom - vertical_overlap_top + 1)
         vertical_overlap_frac = vertical_overlap / max(height, 1)
 
-        is_thin_edge_fragment = (
-                area <= 90
-                and width <= 28
-                and height <= 10
-        )
+        is_thin_edge_fragment = area <= 90 and width <= 28 and height <= 10
 
         is_only_touching_horizontal_edge = (
-                vertical_overlap_frac <= 0.30
-                or y2 <= horizontal_bounds["min_y"] + 1
+            vertical_overlap_frac <= 0.30 or y2 <= horizontal_bounds["min_y"] + 1
         )
 
-        is_after_or_at_horizontal_end = (
-                x >= horizontal_bounds["max_x"] - 1
-        )
+        is_after_or_at_horizontal_end = x >= horizontal_bounds["max_x"] - 1
 
         remove_low_tail = (
-                is_small_tail
-                and starts_after_horizontal_end
-                and is_far_below_horizontal
+            is_small_tail and starts_after_horizontal_end and is_far_below_horizontal
         )
 
         remove_thin_edge_tail = (
-                is_thin_edge_fragment
-                and is_after_or_at_horizontal_end
-                and is_only_touching_horizontal_edge
+            is_thin_edge_fragment
+            and is_after_or_at_horizontal_end
+            and is_only_touching_horizontal_edge
         )
 
         if remove_low_tail or remove_thin_edge_tail:
@@ -956,8 +983,7 @@ def interval_overlap_fraction(*args):
         return float(1.0 - distance / max(max_distance, 1))
 
     raise TypeError(
-        "interval_overlap_fraction accepts either 4 arguments "
-        "or 5 arguments"
+        "interval_overlap_fraction accepts either 4 arguments or 5 arguments"
     )
 
 
@@ -991,10 +1017,7 @@ def filter_principal_tail_under_horizontal(principal_mask, horizontal_rescue_mas
     kept = np.zeros_like(principal_mask, dtype=np.uint8)
     removed = np.zeros_like(principal_mask, dtype=np.uint8)
 
-    areas = [
-        int(stats[label, cv2.CC_STAT_AREA])
-        for label in range(1, num_labels)
-    ]
+    areas = [int(stats[label, cv2.CC_STAT_AREA]) for label in range(1, num_labels)]
     largest_label = int(np.argmax(areas)) + 1
 
     for label in range(1, num_labels):
@@ -1015,9 +1038,9 @@ def filter_principal_tail_under_horizontal(principal_mask, horizontal_rescue_mas
         component_median_y = float(centroids[label][1])
 
         is_small_tail_piece = (
-                area <= PRINCIPAL_UNDER_HORIZONTAL_MAX_AREA
-                and width <= PRINCIPAL_UNDER_HORIZONTAL_MAX_WIDTH
-                and height <= PRINCIPAL_UNDER_HORIZONTAL_MAX_HEIGHT
+            area <= PRINCIPAL_UNDER_HORIZONTAL_MAX_AREA
+            and width <= PRINCIPAL_UNDER_HORIZONTAL_MAX_WIDTH
+            and height <= PRINCIPAL_UNDER_HORIZONTAL_MAX_HEIGHT
         )
 
         overlap_frac = interval_overlap_fraction(
@@ -1031,18 +1054,28 @@ def filter_principal_tail_under_horizontal(principal_mask, horizontal_rescue_mas
         left_gap_to_horizontal = horizontal_bounds["min_x"] - x2
 
         touches_horizontal_zone = (
-                overlap_frac >= PRINCIPAL_UNDER_HORIZONTAL_MIN_X_OVERLAP_FRAC
-                or (
-                        0 <= left_gap_to_horizontal <= PRINCIPAL_UNDER_HORIZONTAL_MAX_LEFT_GAP_TO_HORIZONTAL
-                )
+            overlap_frac >= PRINCIPAL_UNDER_HORIZONTAL_MIN_X_OVERLAP_FRAC
+            or (
+                0
+                <= left_gap_to_horizontal
+                <= PRINCIPAL_UNDER_HORIZONTAL_MAX_LEFT_GAP_TO_HORIZONTAL
+            )
         )
 
         is_below_accepted_horizontal = (
-                component_median_y >= horizontal_median_y + PRINCIPAL_UNDER_HORIZONTAL_MIN_BELOW_HORIZONTAL_PX
-                or y2 >= horizontal_median_y + PRINCIPAL_UNDER_HORIZONTAL_MIN_BELOW_HORIZONTAL_PX + 8
+            component_median_y
+            >= horizontal_median_y + PRINCIPAL_UNDER_HORIZONTAL_MIN_BELOW_HORIZONTAL_PX
+            or y2
+            >= horizontal_median_y
+            + PRINCIPAL_UNDER_HORIZONTAL_MIN_BELOW_HORIZONTAL_PX
+            + 8
         )
 
-        if is_small_tail_piece and touches_horizontal_zone and is_below_accepted_horizontal:
+        if (
+            is_small_tail_piece
+            and touches_horizontal_zone
+            and is_below_accepted_horizontal
+        ):
             removed[component_pixels] = 255
         else:
             kept[component_pixels] = 255
@@ -1102,27 +1135,29 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         x2 = x + width - 1
-        y2 = y + height - 1
+        y + height - 1
 
         component_median_y = float(centroids[label][1])
 
         right_gain = x2 - principal_bounds["max_x"]
 
         size_matches = (
-                area <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_AREA
-                and width >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_WIDTH
-                and width <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_WIDTH
-                and height <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_HEIGHT
+            area <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_AREA
+            and width >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_WIDTH
+            and width <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_WIDTH
+            and height <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_HEIGHT
         )
 
         starts_near_principal_edge = (
-                x <= principal_bounds["max_x"] + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
+            x
+            <= principal_bounds["max_x"]
+            + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
         )
 
         extends_right = (
-                right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
-                and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
-                and starts_near_principal_edge
+            right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
+            and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
+            and starts_near_principal_edge
         )
 
         x1_context = max(0, x - HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_LEFT)
@@ -1131,7 +1166,9 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
         context = principal_mask[:, x1_context:x2_context]
         context_ys, context_xs = np.where(context > 0)
 
-        has_context = len(context_ys) >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_CONTEXT_PIXELS
+        has_context = (
+            len(context_ys) >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_CONTEXT_PIXELS
+        )
 
         if has_context:
             local_reference_y = float(np.median(context_ys))
@@ -1139,8 +1176,9 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
             local_reference_y = None
 
         is_above_local_principal_band = (
-                local_reference_y is not None
-                and component_median_y <= local_reference_y - HORIZONTAL_FLOATING_UPPER_STRIP_MIN_ABOVE_LOCAL_PX
+            local_reference_y is not None
+            and component_median_y
+            <= local_reference_y - HORIZONTAL_FLOATING_UPPER_STRIP_MIN_ABOVE_LOCAL_PX
         )
 
         dilated_principal = cv2.dilate(
@@ -1149,14 +1187,23 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
             iterations=1,
         )
         direct_contact_pixels = int(
-            np.count_nonzero((component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0))
+            np.count_nonzero(
+                (component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0)
+            )
         )
 
         lacks_direct_contact = (
-                direct_contact_pixels <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_DIRECT_CONTACT_PIXELS
+            direct_contact_pixels
+            <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_DIRECT_CONTACT_PIXELS
         )
 
-        if size_matches and extends_right and has_context and is_above_local_principal_band and lacks_direct_contact:
+        if (
+            size_matches
+            and extends_right
+            and has_context
+            and is_above_local_principal_band
+            and lacks_direct_contact
+        ):
             removed[component_pixels] = 255
         else:
             kept[component_pixels] = 255
@@ -1177,8 +1224,8 @@ SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN = 55
 
 
 def filter_secondary_floating_strip_after_horizontal_reject(
-        secondary_mask,
-        principal_mask,
+    secondary_mask,
+    principal_mask,
 ):
     if not SECONDARY_FLOATING_STRIP_AFTER_HORIZONTAL_REJECT_ENABLE:
         return secondary_mask, empty_mask_like(secondary_mask)
@@ -1223,38 +1270,42 @@ def filter_secondary_floating_strip_after_horizontal_reject(
         component_median_y = float(centroids[label][1])
         right_gain = x2 - principal_bounds["max_x"]
         starts_near_principal_edge = (
-                x <= principal_bounds["max_x"] + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
+            x
+            <= principal_bounds["max_x"]
+            + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
         )
         moderate_right_gain = (
-                right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
-                and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
-                and starts_near_principal_edge
+            right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
+            and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
+            and starts_near_principal_edge
         )
 
         contact_pixels = int(
-            np.count_nonzero((component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0))
+            np.count_nonzero(
+                (component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0)
+            )
         )
 
         is_long_thin_right_strip = (
-                area >= 250
-                and area <= 850
-                and width >= 45
-                and width <= 150
-                and height <= 20
-                and moderate_right_gain
-                and contact_pixels <= 12
+            area >= 250
+            and area <= 850
+            and width >= 45
+            and width <= 150
+            and height <= 20
+            and moderate_right_gain
+            and contact_pixels <= 12
         )
 
         is_low_tail_after_right_extension = (
-                area <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA
-                and width <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH
-                and height <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT
-                and moderate_right_gain
-                and right_gain >= SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN
-                and (
-                        component_median_y >= principal_median_y + 40
-                        or y2 >= principal_median_y + 50
-                )
+            area <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA
+            and width <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH
+            and height <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT
+            and moderate_right_gain
+            and right_gain >= SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN
+            and (
+                component_median_y >= principal_median_y + 40
+                or y2 >= principal_median_y + 50
+            )
         )
 
         if is_long_thin_right_strip or is_low_tail_after_right_extension:
@@ -1263,9 +1314,6 @@ def filter_secondary_floating_strip_after_horizontal_reject(
             kept[component_pixels] = 255
 
     return kept, removed
-
-
-
 
 
 def remove_very_small_components(mask):
@@ -1291,15 +1339,15 @@ def remove_very_small_components(mask):
         component_pixels = labels == label
 
         is_tiny = (
-                area < SMALL_COMPONENT_MIN_AREA
-                or width < SMALL_COMPONENT_MIN_WIDTH
-                or height < SMALL_COMPONENT_MIN_HEIGHT
+            area < SMALL_COMPONENT_MIN_AREA
+            or width < SMALL_COMPONENT_MIN_WIDTH
+            or height < SMALL_COMPONENT_MIN_HEIGHT
         )
 
         is_compact_speckle = (
-                area < SMALL_COMPONENT_REMOVE_COMPACT_AREA
-                and width <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH
-                and height <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT
+            area < SMALL_COMPONENT_REMOVE_COMPACT_AREA
+            and width <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH
+            and height <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT
         )
 
         if is_tiny or is_compact_speckle:
@@ -1311,14 +1359,14 @@ def remove_very_small_components(mask):
 
 
 def draw_artifact_source_overlay(
-        crop,
-        principal_mask,
-        horizontal_rescue_mask,
-        secondary_mask_normal,
-        gap_rescue_mask,
-        secondary_rescue_mask,
-        final_mask=None,
-        traveler_points=None,
+    crop,
+    principal_mask,
+    horizontal_rescue_mask,
+    secondary_mask_normal,
+    gap_rescue_mask,
+    secondary_rescue_mask,
+    final_mask=None,
+    traveler_points=None,
 ):
     output = crop.copy()
     overlay = output.copy()
@@ -1343,7 +1391,9 @@ def draw_artifact_source_overlay(
     if final_mask is not None:
         final_u8 = np.zeros_like(final_mask, dtype=np.uint8)
         final_u8[final_mask > 0] = 255
-        contours, _ = cv2.findContours(final_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            final_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         cv2.drawContours(output, contours, -1, (0, 0, 255), 1)
 
     if traveler_points is not None:
@@ -1374,7 +1424,16 @@ def draw_artifact_source_overlay(
             if 0 <= y < output.shape[0] and 0 <= x < output.shape[1]:
                 cv2.circle(output, (x, y), 1, (255, 255, 255), -1)
 
-    cv2.putText(output, "blue=principal cyan=horizontal green=secondary orange=gap magenta=secondary_rescue", (8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(
+        output,
+        "blue=principal cyan=horizontal green=secondary "
+        "orange=gap magenta=secondary_rescue",
+        (8, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
 
     return output

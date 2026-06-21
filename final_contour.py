@@ -139,10 +139,9 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.55):
     color_array = np.array(color, dtype=np.float32)
     result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
-    )
+    result_float[mask_bool] = (1.0 - alpha) * result_float[
+        mask_bool
+    ] + alpha * color_array
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
 
@@ -241,6 +240,7 @@ def draw_final_contour_on_original(
         projected_mask,
     )
 
+
 def remove_very_small_components(mask):
     if not SMALL_COMPONENT_CLEAN_ENABLE:
         return mask, empty_mask_like(mask)
@@ -264,15 +264,15 @@ def remove_very_small_components(mask):
         component_pixels = labels == label
 
         is_tiny = (
-                area < SMALL_COMPONENT_MIN_AREA
-                or width < SMALL_COMPONENT_MIN_WIDTH
-                or height < SMALL_COMPONENT_MIN_HEIGHT
+            area < SMALL_COMPONENT_MIN_AREA
+            or width < SMALL_COMPONENT_MIN_WIDTH
+            or height < SMALL_COMPONENT_MIN_HEIGHT
         )
 
         is_compact_speckle = (
-                area < SMALL_COMPONENT_REMOVE_COMPACT_AREA
-                and width <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH
-                and height <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT
+            area < SMALL_COMPONENT_REMOVE_COMPACT_AREA
+            and width <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH
+            and height <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT
         )
 
         if is_tiny or is_compact_speckle:
@@ -281,4 +281,3 @@ def remove_very_small_components(mask):
             cleaned[component_pixels] = 255
 
     return cleaned, removed
-

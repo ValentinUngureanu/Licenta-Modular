@@ -159,10 +159,10 @@ def is_current_principal_suspect(principal_mask):
     height = principal_mask.shape[0]
 
     return (
-            median_y <= SUSPECT_MAX_MEDIAN_Y_FRAC * height
-            and bounds["height"] >= SUSPECT_MIN_HEIGHT_PX
-            and bounds["area"] >= SUSPECT_MIN_AREA
-            and bounds["width"] >= SUSPECT_MIN_WIDTH_PX
+        median_y <= SUSPECT_MAX_MEDIAN_Y_FRAC * height
+        and bounds["height"] >= SUSPECT_MIN_HEIGHT_PX
+        and bounds["area"] >= SUSPECT_MIN_AREA
+        and bounds["width"] >= SUSPECT_MIN_WIDTH_PX
     )
 
 
@@ -276,7 +276,7 @@ def build_oblique_band_roi_from_line(shape, line, bounds):
         y1 = max(0, y_line - COMPLEX_BAND_ABOVE)
         y2 = min(height - 1, y_line + COMPLEX_BAND_BELOW)
         if y2 >= y1:
-            roi[y1:y2 + 1, x] = 255
+            roi[y1 : y2 + 1, x] = 255
 
     return roi
 
@@ -329,14 +329,18 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
             "complex_roi_mask": selected.copy(),
         }
 
-    complex_roi = build_oblique_band_roi_from_line(anchor_mask.shape, line, anchor_bounds)
+    complex_roi = build_oblique_band_roi_from_line(
+        anchor_mask.shape, line, anchor_bounds
+    )
     complex_search = cv2.bitwise_and(search_mask, complex_roi)
 
     close_kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT,
         (COMPLEX_CLOSE_W, COMPLEX_CLOSE_H),
     )
-    linked_complex = cv2.morphologyEx(complex_search, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+    linked_complex = cv2.morphologyEx(
+        complex_search, cv2.MORPH_CLOSE, close_kernel, iterations=1
+    )
     linked_complex = remove_tiny_components(linked_complex, COMPLEX_MIN_FRAGMENT_AREA)
 
     selected = np.zeros_like(anchor_mask, dtype=np.uint8)
@@ -348,7 +352,9 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
         linked_component = np.zeros_like(anchor_mask, dtype=np.uint8)
         linked_component[labels == label] = 255
 
-        component = cv2.bitwise_and(complex_search, cv2.dilate(linked_component, None, iterations=1))
+        component = cv2.bitwise_and(
+            complex_search, cv2.dilate(linked_component, None, iterations=1)
+        )
         component = remove_tiny_components(component, COMPLEX_MIN_FRAGMENT_AREA)
 
         bounds = get_mask_bounds(component)
@@ -373,7 +379,11 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
         if gap_x > COMPLEX_MAX_FRAGMENT_GAP_X:
             continue
 
-        overlap_x = min(bounds["max_x"], anchor_bounds["max_x"]) - max(bounds["min_x"], anchor_bounds["min_x"]) + 1
+        overlap_x = (
+            min(bounds["max_x"], anchor_bounds["max_x"])
+            - max(bounds["min_x"], anchor_bounds["min_x"])
+            + 1
+        )
         overlap_x = max(0, overlap_x)
         if overlap_x < 8 and gap_x > 42:
             continue
@@ -393,9 +403,13 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
 
     if mask_area(selected) < 0.28 * max(mask_area(anchor_mask), 1):
         fallback = np.zeros_like(anchor_mask, dtype=np.uint8)
-        fallback_pixels = remove_tiny_components(complex_search, COMPLEX_MIN_FRAGMENT_AREA)
+        fallback_pixels = remove_tiny_components(
+            complex_search, COMPLEX_MIN_FRAGMENT_AREA
+        )
 
-        num_fb, fb_labels, fb_stats, _ = cv2.connectedComponentsWithStats(fallback_pixels, 8)
+        num_fb, fb_labels, fb_stats, _ = cv2.connectedComponentsWithStats(
+            fallback_pixels, 8
+        )
 
         for fb_label in range(1, num_fb):
             fb_component = np.zeros_like(anchor_mask, dtype=np.uint8)
@@ -420,8 +434,11 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
             if fb_gap_x > COMPLEX_MAX_FRAGMENT_GAP_X:
                 continue
 
-            fb_overlap_x = min(fb_bounds["max_x"], anchor_bounds["max_x"]) - max(fb_bounds["min_x"],
-                                                                                 anchor_bounds["min_x"]) + 1
+            fb_overlap_x = (
+                min(fb_bounds["max_x"], anchor_bounds["max_x"])
+                - max(fb_bounds["min_x"], anchor_bounds["min_x"])
+                + 1
+            )
             fb_overlap_x = max(0, fb_overlap_x)
 
             if fb_overlap_x < 6 and fb_gap_x > 42:
@@ -450,7 +467,11 @@ def candidate_touch_score(bounds, current_bounds):
     horizontal_gap = bounds["min_x"] - current_bounds["max_x"]
 
     if horizontal_gap <= 0:
-        overlap = min(bounds["max_x"], current_bounds["max_x"]) - max(bounds["min_x"], current_bounds["min_x"]) + 1
+        overlap = (
+            min(bounds["max_x"], current_bounds["max_x"])
+            - max(bounds["min_x"], current_bounds["min_x"])
+            + 1
+        )
         return float(max(overlap, 0))
 
     return float(-horizontal_gap)
@@ -505,16 +526,16 @@ def score_candidate(component_original, linked_component, principal_mask):
     y_penalty = abs(candidate_median_y - target_y)
 
     score = (
-            3.5 * bounds["width"]
-            + 1.15 * bounds["area"]
-            + 30.0 * thinness
-            + 160.0 * density
-            + 0.8 * max(touch, 0.0)
-            - 1.6 * linked_bounds["height"]
-            - 28.0 * abs(slope)
-            - 2.0 * residual
-            - 0.45 * y_penalty
-            - 3.0 * missing_touch_penalty
+        3.5 * bounds["width"]
+        + 1.15 * bounds["area"]
+        + 30.0 * thinness
+        + 160.0 * density
+        + 0.8 * max(touch, 0.0)
+        - 1.6 * linked_bounds["height"]
+        - 28.0 * abs(slope)
+        - 2.0 * residual
+        - 0.45 * y_penalty
+        - 3.0 * missing_touch_penalty
     )
 
     return float(score)
@@ -543,7 +564,9 @@ def build_principal_candidates(binary_top2, principal_mask):
         cv2.MORPH_RECT,
         (CLOSE_KERNEL_W, CLOSE_KERNEL_H),
     )
-    linked_mask = cv2.morphologyEx(search_mask, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+    linked_mask = cv2.morphologyEx(
+        search_mask, cv2.MORPH_CLOSE, close_kernel, iterations=1
+    )
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
 
@@ -571,7 +594,9 @@ def build_principal_candidates(binary_top2, principal_mask):
             continue
 
         top_mask = band_by_top_edge(component_original)
-        complex_result = build_controlled_pleura_complex(component_original, search_mask)
+        complex_result = build_controlled_pleura_complex(
+            component_original, search_mask
+        )
         complex_mask = complex_result["selected_mask"]
 
         item = {
@@ -672,9 +697,13 @@ def select_principal_by_lower_candidate(binary_top2, principal_mask):
     best = selector_result["candidates"][0]
     selected_mask = normalize_mask(best.get("complex_mask", best["top_mask"]))
 
-    if mask_area(selected_mask) < COMPLEX_MIN_SELECTED_AREA_FACTOR * mask_area(principal_mask):
+    if mask_area(selected_mask) < COMPLEX_MIN_SELECTED_AREA_FACTOR * mask_area(
+        principal_mask
+    ):
         fallback_top = normalize_mask(best["top_mask"])
-        if mask_area(fallback_top) >= COMPLEX_MIN_SELECTED_AREA_FACTOR * mask_area(principal_mask):
+        if mask_area(fallback_top) >= COMPLEX_MIN_SELECTED_AREA_FACTOR * mask_area(
+            principal_mask
+        ):
             selected_mask = fallback_top
         else:
             return {
@@ -729,15 +758,29 @@ def draw_mask_overlay(image_bgr, mask, color, alpha=0.60):
     return output
 
 
-def draw_principal_selector_debug(crop, original_principal_mask, selector_result, traveler_points=None):
+def draw_principal_selector_debug(
+    crop, original_principal_mask, selector_result, traveler_points=None
+):
     output = to_bgr(crop)
 
-    output = draw_mask_overlay(output, selector_result.get("roi_mask"), (180, 0, 180), alpha=0.15)
-    output = draw_mask_overlay(output, selector_result.get("rejected_mask"), (0, 0, 255), alpha=0.35)
-    output = draw_mask_overlay(output, selector_result.get("candidate_mask"), (0, 255, 255), alpha=0.25)
-    output = draw_mask_overlay(output, original_principal_mask, (255, 255, 0), alpha=0.55)
-    output = draw_mask_overlay(output, selector_result.get("accepted_mask"), (255, 128, 0), alpha=0.35)
-    output = draw_mask_overlay(output, selector_result.get("selected_mask"), (0, 255, 0), alpha=0.75)
+    output = draw_mask_overlay(
+        output, selector_result.get("roi_mask"), (180, 0, 180), alpha=0.15
+    )
+    output = draw_mask_overlay(
+        output, selector_result.get("rejected_mask"), (0, 0, 255), alpha=0.35
+    )
+    output = draw_mask_overlay(
+        output, selector_result.get("candidate_mask"), (0, 255, 255), alpha=0.25
+    )
+    output = draw_mask_overlay(
+        output, original_principal_mask, (255, 255, 0), alpha=0.55
+    )
+    output = draw_mask_overlay(
+        output, selector_result.get("accepted_mask"), (255, 128, 0), alpha=0.35
+    )
+    output = draw_mask_overlay(
+        output, selector_result.get("selected_mask"), (0, 255, 0), alpha=0.75
+    )
 
     if traveler_points is not None:
         for point in traveler_points:
@@ -768,7 +811,8 @@ def draw_principal_selector_debug(crop, original_principal_mask, selector_result
 
     cv2.putText(
         output,
-        "cyan=initial | yellow=candidates | orange=complex accepted | green=selected | red=rejected | purple=ROI",
+        "cyan=initial | yellow=candidates | orange=complex accepted | "
+        "green=selected | red=rejected | purple=ROI",
         (8, 46),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.43,

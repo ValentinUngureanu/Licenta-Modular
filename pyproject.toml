@@ -1,0 +1,24 @@
+[tool.ruff]
+# Versiunea minimă de Python pe care o țintești
+target-version = "py310"
+
+# Lungimea maximă a unei linii de cod (standardul PEP 8 recomandă 79, dar 88 e standardul modern Black)
+line-length = 88
+
+[tool.ruff.lint]
+# "Formulele" sau regulile pe care vrei să le activezi
+select = [
+    "E",   # Erori standard de stil (pycodestyle)
+    "W",   # Warning-uri de stil (pycodestyle)
+    "F",   # Erori de logică/variabile nefolosite (pyflakes)
+    "I",   # Sortarea automată a importurilor (isort)
+    "C90", # Verifică dacă codul e prea complex (mccabe)
+    "B",   # Previne bug-uri comune (flake8-bugbear)
+]
+
+# Reguli pe care vrei să le ignori în mod explicit (dacă e cazul)
+ignore = []
+
+[tool.ruff.lint.mccabe]
+# Complexitatea maximă permisă pentru o funcție (dacă o depășești, primești warning)
+max-complexity = 20

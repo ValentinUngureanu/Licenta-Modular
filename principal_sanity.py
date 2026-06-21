@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 PRINCIPAL_SANITY_ENABLE = True
 
 SUSPECT_MAX_MEDIAN_Y_FRAC = 0.31
@@ -218,7 +217,9 @@ def find_lower_principal_candidate(binary_top2, principal_mask):
         cv2.MORPH_RECT,
         (LINK_KERNEL_W, LINK_KERNEL_H),
     )
-    linked_mask = cv2.morphologyEx(search_mask, cv2.MORPH_CLOSE, link_kernel, iterations=1)
+    linked_mask = cv2.morphologyEx(
+        search_mask, cv2.MORPH_CLOSE, link_kernel, iterations=1
+    )
 
     num_labels, labels, _, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
 
@@ -351,7 +352,8 @@ def repair_principal_if_upper_artifact(binary_top2, principal_mask):
         and replacement_bounds["width"] >= LOWER_CANDIDATE_MIN_WIDTH_PX
         and replacement_median_y is not None
         and principal_median_y is not None
-        and replacement_median_y >= principal_median_y + LOWER_CANDIDATE_MIN_MEDIAN_DELTA_Y
+        and replacement_median_y
+        >= principal_median_y + LOWER_CANDIDATE_MIN_MEDIAN_DELTA_Y
     )
 
     if not valid_replacement:
@@ -409,7 +411,9 @@ def draw_principal_sanity_debug(
     output = draw_mask_overlay(output, roi_mask, (180, 0, 180), alpha=0.20)
     output = draw_mask_overlay(output, rejected_mask, (0, 0, 255), alpha=0.60)
     output = draw_mask_overlay(output, candidate_mask, (0, 255, 255), alpha=0.60)
-    output = draw_mask_overlay(output, original_principal_mask, (255, 255, 0), alpha=0.55)
+    output = draw_mask_overlay(
+        output, original_principal_mask, (255, 255, 0), alpha=0.55
+    )
     output = draw_mask_overlay(output, repaired_principal_mask, (0, 255, 0), alpha=0.70)
 
     return output

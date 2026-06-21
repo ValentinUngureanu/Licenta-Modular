@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from postprocessing import empty_mask_like, mask_median_y, get_mask_bounds, mask_area
+from postprocessing import empty_mask_like, get_mask_bounds, mask_area, mask_median_y
 
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
@@ -122,10 +122,9 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     color_array = np.array(color, dtype=np.float32)
     result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (
-            (1.0 - alpha) * result_float[mask_bool]
-            + alpha * color_array
-    )
+    result_float[mask_bool] = (1.0 - alpha) * result_float[
+        mask_bool
+    ] + alpha * color_array
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
 
@@ -173,6 +172,7 @@ def fit_secondary_model(points, image_shape):
     _, width = image_shape[:2]
 
     if points is None or len(points) == 0:
+
         def predict_empty(x_values):
             x_values = np.asarray(x_values, dtype=np.float32)
             return np.zeros_like(x_values, dtype=np.float32)
@@ -189,8 +189,8 @@ def fit_secondary_model(points, image_shape):
     point_width = max(1, max_x - min_x + 1)
 
     if (
-            len(points) >= MODEL_DEGREE_2_MIN_POINTS
-            and point_width >= MODEL_DEGREE_2_MIN_WIDTH_FRAC * width
+        len(points) >= MODEL_DEGREE_2_MIN_POINTS
+        and point_width >= MODEL_DEGREE_2_MIN_WIDTH_FRAC * width
     ):
         degree = 2
     elif len(points) >= 2:
@@ -302,7 +302,7 @@ def build_side_roi(search_binary_mask, current_mask, current_points, side):
     xs = np.arange(x1, x2 + 1, dtype=np.float32)
     ys = predict(xs)
 
-    for x, center_y in zip(xs.astype(np.int32), ys):
+    for x, center_y in zip(xs.astype(np.int32), ys, strict=False):
         cy = int(round(center_y))
 
         top = max(0, cy - half_height)
@@ -369,13 +369,13 @@ def edge_y_from_mask(mask, side):
 
 
 def is_secondary_candidate_too_high(
-        ys_float,
-        predicted,
-        candidate_edge_y,
-        expected_edge_y,
-        current_edge_y,
-        half_height,
-        gap,
+    ys_float,
+    predicted,
+    candidate_edge_y,
+    expected_edge_y,
+    current_edge_y,
+    half_height,
+    gap,
 ):
     if not SECONDARY_UPPER_ARTIFACT_GUARD_ENABLE:
         return False
@@ -405,26 +405,23 @@ def is_secondary_candidate_too_high(
         SECONDARY_UPPER_ARTIFACT_EDGE_FACTOR * half_height,
     )
 
-    clearly_above_model = (
-            median_signed < -median_limit
-            and p90_above > p90_limit
-    )
+    clearly_above_model = median_signed < -median_limit and p90_above > p90_limit
 
     edge_too_high = (
-            candidate_edge_y < expected_edge_y - edge_limit
-            and candidate_edge_y < current_edge_y - edge_limit
+        candidate_edge_y < expected_edge_y - edge_limit
+        and candidate_edge_y < current_edge_y - edge_limit
     )
 
     return bool(clearly_above_model and edge_too_high)
 
 
 def score_secondary_candidate(
-        component_mask,
-        current_mask,
-        predict,
-        half_height,
-        image_shape,
-        side,
+    component_mask,
+    current_mask,
+    predict,
+    half_height,
+    image_shape,
+    side,
 ):
     _, width = image_shape[:2]
 
@@ -446,8 +443,8 @@ def score_secondary_candidate(
         return None
 
     if (
-            stats["verticality"] > SECONDARY_MAX_VERTICALITY
-            and stats["width"] < SECONDARY_VERTICALITY_WIDTH_FRAC * width
+        stats["verticality"] > SECONDARY_MAX_VERTICALITY
+        and stats["width"] < SECONDARY_VERTICALITY_WIDTH_FRAC * width
     ):
         return None
 
@@ -490,18 +487,16 @@ def score_secondary_candidate(
     if p90_dist > SECONDARY_MAX_P90_DIST_FACTOR * half_height:
         return None
 
-    expected_edge_y = float(
-        predict(np.array([edge_x], dtype=np.float32))[0]
-    )
+    expected_edge_y = float(predict(np.array([edge_x], dtype=np.float32))[0])
 
     if is_secondary_candidate_too_high(
-            ys_float=ys_float,
-            predicted=predicted,
-            candidate_edge_y=candidate_edge_y,
-            expected_edge_y=expected_edge_y,
-            current_edge_y=current_edge_y,
-            half_height=half_height,
-            gap=gap,
+        ys_float=ys_float,
+        predicted=predicted,
+        candidate_edge_y=candidate_edge_y,
+        expected_edge_y=expected_edge_y,
+        current_edge_y=current_edge_y,
+        half_height=half_height,
+        gap=gap,
     ):
         return None
 
@@ -535,10 +530,10 @@ def score_secondary_candidate(
 
 
 def find_secondary_components_for_side(
-        search_binary_mask,
-        current_mask,
-        current_points,
-        side,
+    search_binary_mask,
+    current_mask,
+    current_points,
+    side,
 ):
     search_binary = normalize_binary_mask(search_binary_mask)
     current_mask = normalize_binary_mask(current_mask)
@@ -611,7 +606,9 @@ def find_secondary_components_for_side(
     }
 
 
-def build_secondary_components(binary_top1, binary_top2, principal_mask, traveler_points):
+def build_secondary_components(
+    binary_top1, binary_top2, principal_mask, traveler_points
+):
     binary_top1 = normalize_binary_mask(binary_top1)
     binary_top2 = normalize_binary_mask(binary_top2)
     principal_mask = normalize_binary_mask(principal_mask)
@@ -702,10 +699,10 @@ def draw_secondary_roi(base_image, roi_mask, principal_mask=None, traveler_point
 
 
 def draw_secondary_candidates(
-        base_image,
-        candidate_mask,
-        rejected_mask=None,
-        traveler_points=None,
+    base_image,
+    candidate_mask,
+    rejected_mask=None,
+    traveler_points=None,
 ):
     result = draw_mask_overlay(base_image, candidate_mask, CANDIDATE_COLOR, alpha=0.55)
 
@@ -719,10 +716,10 @@ def draw_secondary_candidates(
 
 
 def draw_secondary_components(
-        base_image,
-        principal_mask,
-        secondary_mask,
-        traveler_points=None,
+    base_image,
+    principal_mask,
+    secondary_mask,
+    traveler_points=None,
 ):
     result = to_bgr(base_image)
 
@@ -743,9 +740,10 @@ def draw_merged_components(base_image, merged_mask, traveler_points=None):
 
     return result
 
+
 def filter_secondary_tail_after_horizontal(
-        secondary_mask,
-        horizontal_rescue_mask,
+    secondary_mask,
+    horizontal_rescue_mask,
 ):
     if not SECONDARY_AFTER_HORIZONTAL_TAIL_GUARD_ENABLE:
         return secondary_mask, empty_mask_like(secondary_mask)
@@ -785,18 +783,25 @@ def filter_secondary_tail_after_horizontal(
         component_median_y = float(centroids[label][1])
 
         is_small_tail = (
-                area <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA
-                and width <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH
-                and height <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT
+            area <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA
+            and width <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH
+            and height <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT
         )
 
         starts_after_horizontal_end = (
-                x >= horizontal_bounds["max_x"] + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP
+            x
+            >= horizontal_bounds["max_x"]
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP
         )
 
         is_far_below_horizontal = (
-                component_median_y >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
-                or y2 >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX + 8
+            component_median_y
+            >= horizontal_median_y
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
+            or y2
+            >= horizontal_median_y
+            + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
+            + 8
         )
 
         vertical_overlap_top = max(y, horizontal_bounds["min_y"])
@@ -804,31 +809,22 @@ def filter_secondary_tail_after_horizontal(
         vertical_overlap = max(0, vertical_overlap_bottom - vertical_overlap_top + 1)
         vertical_overlap_frac = vertical_overlap / max(height, 1)
 
-        is_thin_edge_fragment = (
-                area <= 90
-                and width <= 28
-                and height <= 10
-        )
+        is_thin_edge_fragment = area <= 90 and width <= 28 and height <= 10
 
         is_only_touching_horizontal_edge = (
-                vertical_overlap_frac <= 0.30
-                or y2 <= horizontal_bounds["min_y"] + 1
+            vertical_overlap_frac <= 0.30 or y2 <= horizontal_bounds["min_y"] + 1
         )
 
-        is_after_or_at_horizontal_end = (
-                x >= horizontal_bounds["max_x"] - 1
-        )
+        is_after_or_at_horizontal_end = x >= horizontal_bounds["max_x"] - 1
 
         remove_low_tail = (
-                is_small_tail
-                and starts_after_horizontal_end
-                and is_far_below_horizontal
+            is_small_tail and starts_after_horizontal_end and is_far_below_horizontal
         )
 
         remove_thin_edge_tail = (
-                is_thin_edge_fragment
-                and is_after_or_at_horizontal_end
-                and is_only_touching_horizontal_edge
+            is_thin_edge_fragment
+            and is_after_or_at_horizontal_end
+            and is_only_touching_horizontal_edge
         )
 
         if remove_low_tail or remove_thin_edge_tail:
@@ -837,6 +833,7 @@ def filter_secondary_tail_after_horizontal(
             kept[component_pixels] = 255
 
     return kept, removed
+
 
 def interval_overlap_fraction(a_min, a_max, b_min, b_max, width_a):
     left = max(a_min, b_min)
@@ -847,9 +844,10 @@ def interval_overlap_fraction(a_min, a_max, b_min, b_max, width_a):
 
     return float((right - left + 1) / max(width_a, 1))
 
+
 def filter_secondary_floating_strip_after_horizontal_reject(
-        secondary_mask,
-        principal_mask,
+    secondary_mask,
+    principal_mask,
 ):
     if not SECONDARY_FLOATING_STRIP_AFTER_HORIZONTAL_REJECT_ENABLE:
         return secondary_mask, empty_mask_like(secondary_mask)
@@ -894,36 +892,40 @@ def filter_secondary_floating_strip_after_horizontal_reject(
         component_median_y = float(centroids[label][1])
         right_gain = x2 - principal_bounds["max_x"]
         starts_near_principal_edge = (
-                x <= principal_bounds["max_x"] + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
+            x
+            <= principal_bounds["max_x"]
+            + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
         )
         moderate_right_gain = (
-                right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
-                and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
-                and starts_near_principal_edge
+            right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
+            and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
+            and starts_near_principal_edge
         )
 
         contact_pixels = int(
-            np.count_nonzero((component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0))
+            np.count_nonzero(
+                (component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0)
+            )
         )
 
         is_long_thin_right_strip = (
-                250 <= area <= 850
-                and 45 <= width <= 150
-                and height <= 20
-                and moderate_right_gain
-                and contact_pixels <= 12
+            250 <= area <= 850
+            and 45 <= width <= 150
+            and height <= 20
+            and moderate_right_gain
+            and contact_pixels <= 12
         )
 
         is_low_tail_after_right_extension = (
-                area <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA
-                and width <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH
-                and height <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT
-                and moderate_right_gain
-                and right_gain >= SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN
-                and (
-                        component_median_y >= principal_median_y + 40
-                        or y2 >= principal_median_y + 50
-                )
+            area <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA
+            and width <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH
+            and height <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT
+            and moderate_right_gain
+            and right_gain >= SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN
+            and (
+                component_median_y >= principal_median_y + 40
+                or y2 >= principal_median_y + 50
+            )
         )
 
         if is_long_thin_right_strip or is_low_tail_after_right_extension:

@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-
 MIN_BORDER_AREA_FRAC = 0.0007
 SMALL_CONTOUR_AREA_FRAC = 3e-05
 
@@ -461,8 +460,8 @@ def estimate_crop_box(image_bgr) -> CropBox:
     vertical_box = clamp_box(vertical_box, gray.shape)
 
     gray_vertical = gray[
-        vertical_box.top:vertical_box.bottom,
-        vertical_box.left:vertical_box.right,
+        vertical_box.top : vertical_box.bottom,
+        vertical_box.left : vertical_box.right,
     ].copy()
 
     horizontal_box = estimate_left_right_from_vertical_crop(gray_vertical)
@@ -487,9 +486,15 @@ def estimate_crop_box(image_bgr) -> CropBox:
     final_box = clamp_box(final_box, gray.shape)
 
     add_top = max(EXTRA_CROP_TOP_PX, int(round(EXTRA_CROP_TOP_FRAC * final_box.height)))
-    add_bottom = max(EXTRA_CROP_BOTTOM_PX, int(round(EXTRA_CROP_BOTTOM_FRAC * final_box.height)))
-    add_left = max(EXTRA_CROP_LEFT_PX, int(round(EXTRA_CROP_LEFT_FRAC * final_box.width)))
-    add_right = max(EXTRA_CROP_RIGHT_PX, int(round(EXTRA_CROP_RIGHT_FRAC * final_box.width)))
+    add_bottom = max(
+        EXTRA_CROP_BOTTOM_PX, int(round(EXTRA_CROP_BOTTOM_FRAC * final_box.height))
+    )
+    add_left = max(
+        EXTRA_CROP_LEFT_PX, int(round(EXTRA_CROP_LEFT_FRAC * final_box.width))
+    )
+    add_right = max(
+        EXTRA_CROP_RIGHT_PX, int(round(EXTRA_CROP_RIGHT_FRAC * final_box.width))
+    )
 
     final_box = CropBox(
         top=final_box.top + add_top,
@@ -504,8 +509,8 @@ def estimate_crop_box(image_bgr) -> CropBox:
 
 def apply_crop(image_bgr, crop_box: CropBox):
     return image_bgr[
-        crop_box.top:crop_box.bottom,
-        crop_box.left:crop_box.right,
+        crop_box.top : crop_box.bottom,
+        crop_box.left : crop_box.right,
     ].copy()
 
 

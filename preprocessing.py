@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 PALETTE_METHOD = "clahe_kmeans"
 
 PALETTE_PERCENTILE_LOW = 2

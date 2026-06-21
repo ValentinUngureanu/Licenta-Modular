@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 
-
 from postprocessing import (
     empty_mask_like,
     get_mask_bounds,
@@ -135,10 +134,9 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.65):
     color_array = np.array(color, dtype=np.float32)
     result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (
-            (1.0 - alpha) * result_float[mask_bool]
-            + alpha * color_array
-    )
+    result_float[mask_bool] = (1.0 - alpha) * result_float[
+        mask_bool
+    ] + alpha * color_array
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
 
@@ -245,7 +243,9 @@ def edge_y_from_mask(mask, side):
     return float(np.median(selected))
 
 
-def build_endpoint_predictor(guidance_points, current_mask, current_bounds, side, image_shape):
+def build_endpoint_predictor(
+    guidance_points, current_mask, current_bounds, side, image_shape
+):
     height, width = image_shape[:2]
 
     if side == "left":
@@ -417,7 +417,7 @@ def build_side_roi(binary_top2, current_mask, guidance_points, side):
     xs = np.arange(x1, x2 + 1, dtype=np.float32)
     ys = predict(xs)
 
-    for x, center_y in zip(xs.astype(np.int32), ys):
+    for x, center_y in zip(xs.astype(np.int32), ys, strict=False):
         cy = int(round(center_y))
 
         top = max(0, cy - half_height)
@@ -464,12 +464,12 @@ def component_stats(component_mask):
 
 
 def is_rescue_candidate_too_high(
-        ys_float,
-        predicted,
-        candidate_edge_y,
-        expected_edge_y,
-        current_edge_y,
-        gap,
+    ys_float,
+    predicted,
+    candidate_edge_y,
+    expected_edge_y,
+    current_edge_y,
+    gap,
 ):
     if not RESCUE_UPPER_ARTIFACT_GUARD_ENABLE:
         return False
@@ -483,8 +483,12 @@ def is_rescue_candidate_too_high(
     median_signed = float(np.median(signed))
     p90_above = float(np.percentile(above, 90))
 
-    edge_above_model = candidate_edge_y < expected_edge_y - RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_MODEL_PX
-    edge_above_current = candidate_edge_y < current_edge_y - RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_CURRENT_PX
+    edge_above_model = (
+        candidate_edge_y < expected_edge_y - RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_MODEL_PX
+    )
+    edge_above_current = (
+        candidate_edge_y < current_edge_y - RESCUE_UPPER_ARTIFACT_EDGE_ABOVE_CURRENT_PX
+    )
 
     median_above_model = median_signed < -RESCUE_UPPER_ARTIFACT_MEDIAN_ABOVE_MODEL_PX
     p90_above_model = p90_above > RESCUE_UPPER_ARTIFACT_P90_ABOVE_MODEL_PX
@@ -496,7 +500,9 @@ def is_rescue_candidate_too_high(
     )
 
 
-def score_rescue_candidate(component_mask, current_mask, predict, half_height, image_shape, side):
+def score_rescue_candidate(
+    component_mask, current_mask, predict, half_height, image_shape, side
+):
     _, width = image_shape[:2]
 
     stats = component_stats(component_mask)
@@ -517,8 +523,8 @@ def score_rescue_candidate(component_mask, current_mask, predict, half_height, i
         return None
 
     if (
-            stats["verticality"] > RESCUE_MAX_VERTICALITY
-            and stats["width"] < RESCUE_VERTICALITY_WIDTH_FRAC * width
+        stats["verticality"] > RESCUE_MAX_VERTICALITY
+        and stats["width"] < RESCUE_VERTICALITY_WIDTH_FRAC * width
     ):
         return None
 
@@ -571,17 +577,15 @@ def score_rescue_candidate(component_mask, current_mask, predict, half_height, i
     if p90_dist > RESCUE_MAX_P90_DIST_FACTOR * half_height:
         return None
 
-    expected_edge_y = float(
-        predict(np.array([edge_x], dtype=np.float32))[0]
-    )
+    expected_edge_y = float(predict(np.array([edge_x], dtype=np.float32))[0])
 
     if is_rescue_candidate_too_high(
-            ys_float=ys_float,
-            predicted=predicted,
-            candidate_edge_y=candidate_edge_y,
-            expected_edge_y=expected_edge_y,
-            current_edge_y=current_edge_y,
-            gap=gap,
+        ys_float=ys_float,
+        predicted=predicted,
+        candidate_edge_y=candidate_edge_y,
+        expected_edge_y=expected_edge_y,
+        current_edge_y=current_edge_y,
+        gap=gap,
     ):
         return None
 
@@ -718,8 +722,8 @@ def guard_overgrown_secondary(principal_mask, secondary_mask):
     width_ratio = secondary_bounds["width"] / principal_width
 
     if (
-            area_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA
-            and width_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH
+        area_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA
+        and width_ratio <= GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH
     ):
         empty = np.zeros_like(principal_mask, dtype=np.uint8)
         return secondary_mask, empty, False
@@ -730,7 +734,9 @@ def guard_overgrown_secondary(principal_mask, secondary_mask):
     return filtered_secondary, removed_mask, True
 
 
-def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, traveler_points):
+def rescue_after_secondary(
+    binary_top2, principal_mask, secondary_mask, traveler_points
+):
     binary_top2 = normalize_binary_mask(binary_top2)
     principal_mask = normalize_binary_mask(principal_mask)
     secondary_mask = normalize_binary_mask(secondary_mask)
@@ -762,11 +768,13 @@ def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, traveler
             added_this_round = False
 
             for side in ["left", "right"]:
-                accepted, accepted_mask, roi_mask, candidate_mask, rejected_mask = find_rescue_for_side(
-                    binary_top2,
-                    current_mask,
-                    guidance_points,
-                    side,
+                accepted, accepted_mask, roi_mask, candidate_mask, rejected_mask = (
+                    find_rescue_for_side(
+                        binary_top2,
+                        current_mask,
+                        guidance_points,
+                        side,
+                    )
                 )
 
                 all_roi_mask[roi_mask > 0] = 255
@@ -816,15 +824,15 @@ def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, traveler
 
 
 def draw_rescue_debug(
-        base_image,
-        principal_mask,
-        secondary_mask,
-        rescue_mask,
-        removed_secondary_mask=None,
-        roi_mask=None,
-        candidate_mask=None,
-        rejected_mask=None,
-        traveler_points=None,
+    base_image,
+    principal_mask,
+    secondary_mask,
+    rescue_mask,
+    removed_secondary_mask=None,
+    roi_mask=None,
+    candidate_mask=None,
+    rejected_mask=None,
+    traveler_points=None,
 ):
     result = to_bgr(base_image)
 
@@ -842,7 +850,9 @@ def draw_rescue_debug(
     result = draw_mask_overlay(result, rescue_mask, RESCUE_COLOR, alpha=0.90)
 
     if removed_secondary_mask is not None:
-        result = draw_mask_overlay(result, removed_secondary_mask, REJECTED_COLOR, alpha=0.40)
+        result = draw_mask_overlay(
+            result, removed_secondary_mask, REJECTED_COLOR, alpha=0.40
+        )
 
     if traveler_points is not None:
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
@@ -858,11 +868,12 @@ def draw_merged_after_rescue(base_image, merged_mask, traveler_points=None):
 
     return result
 
+
 def should_accept_secondary_rescue(
-        principal_mask,
-        secondary_mask_before_rescue,
-        merged_before_rescue,
-        secondary_rescue_result,
+    principal_mask,
+    secondary_mask_before_rescue,
+    merged_before_rescue,
+    secondary_rescue_result,
 ) -> bool:
     principal_area = mask_area(principal_mask)
     secondary_before_area = mask_area(secondary_mask_before_rescue)
@@ -881,13 +892,15 @@ def should_accept_secondary_rescue(
     secondary_before_density = mask_density(secondary_mask_before_rescue)
 
     overgrown_secondary = (
-            secondary_before_area >= SECONDARY_RESCUE_OVERGROWTH_MIN_AREA
-            and secondary_before_area > SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO * principal_area
-            and secondary_before_bounds is not None
-            and (
-                    secondary_before_density >= SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY
-                    or secondary_before_bounds["height"] >= SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT
-            )
+        secondary_before_area >= SECONDARY_RESCUE_OVERGROWTH_MIN_AREA
+        and secondary_before_area
+        > SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO * principal_area
+        and secondary_before_bounds is not None
+        and (
+            secondary_before_density >= SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY
+            or secondary_before_bounds["height"]
+            >= SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT
+        )
     )
 
     if overgrown_secondary:
@@ -920,12 +933,13 @@ def should_accept_secondary_rescue(
 
     return True
 
+
 def run_guarded_secondary_rescue(
-        binary_top2_guarded,
-        principal_after_horizontal_mask,
-        secondary_mask_before_rescue,
-        merged_before_secondary_rescue,
-        traveler_points,
+    binary_top2_guarded,
+    principal_after_horizontal_mask,
+    secondary_mask_before_rescue,
+    merged_before_secondary_rescue,
+    traveler_points,
 ):
     secondary_rescue_result = rescue_after_secondary(
         binary_top2=binary_top2_guarded,
@@ -935,10 +949,10 @@ def run_guarded_secondary_rescue(
     )
 
     if should_accept_secondary_rescue(
-            principal_after_horizontal_mask,
-            secondary_mask_before_rescue,
-            merged_before_secondary_rescue,
-            secondary_rescue_result,
+        principal_after_horizontal_mask,
+        secondary_mask_before_rescue,
+        merged_before_secondary_rescue,
+        secondary_rescue_result,
     ):
         return secondary_rescue_result
 
@@ -965,6 +979,7 @@ def run_guarded_secondary_rescue(
         "guard_triggered": False,
         "added_components": [],
     }
+
 
 def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
     if not RIGHT_ISOLATED_SECONDARY_RESCUE_GUARD_ENABLE:
@@ -1004,13 +1019,14 @@ def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
         is_right_isolated = right_gap >= RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX
 
         is_small_enough = (
-                area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
-                and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
-                and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
+            area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
+            and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
+            and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
         )
 
         is_much_lower = (
-                component_median_y >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
+            component_median_y
+            >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
         )
 
         if is_right_isolated and is_small_enough and is_much_lower:
@@ -1019,4 +1035,3 @@ def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
             kept[component_pixels] = 255
 
     return kept, removed
-
