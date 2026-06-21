@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from gap_rescue import mask_area
+from postprocessing import get_mask_bounds, empty_mask_like
 
 PRINCIPAL_COLOR = (0, 255, 0)
 RESCUE_COLOR = (255, 0, 255)
@@ -32,6 +34,47 @@ HORIZONTAL_MAX_COMPONENT_VERTICALITY = 1.60
 HORIZONTAL_MAX_ACCEPTED_COMPONENTS_PER_SIDE = 4
 
 HORIZONTAL_SIDE_MIN_MISSING_FRAC = 0.04
+
+HORIZONTAL_RESCUE_MAX_AREA_FACTOR = 0.85
+HORIZONTAL_RESCUE_MAX_WIDTH_FACTOR = 1.75
+HORIZONTAL_RESCUE_MAX_WIDTH_PX = 240
+HORIZONTAL_RESCUE_MAX_HEIGHT_FRAC = 0.18
+HORIZONTAL_RESCUE_MIN_EXTENSION_PX = 8
+HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX = 50
+
+HORIZONTAL_LAYERED_TAIL_GUARD_ENABLE = True
+HORIZONTAL_LAYERED_TAIL_MIN_COMPONENTS = 3
+HORIZONTAL_LAYERED_TAIL_MIN_UPPER_AREA = 180
+HORIZONTAL_LAYERED_TAIL_MAX_UPPER_HEIGHT = 24
+HORIZONTAL_LAYERED_TAIL_MAX_LOWER_AREA = 900
+HORIZONTAL_LAYERED_TAIL_MAX_LOWER_HEIGHT = 34
+HORIZONTAL_LAYERED_TAIL_MIN_Y_GAP = 16
+HORIZONTAL_LAYERED_TAIL_MIN_OVERLAP_FRAC = 0.35
+HORIZONTAL_LAYERED_TAIL_MAX_RIGHT_GAP_FROM_UPPER = 95
+HORIZONTAL_LAYERED_TAIL_MIN_RIGHT_REGION_GAIN = -80
+
+RIGHT_ISOLATED_HORIZONTAL_COMPONENT_GUARD_ENABLE = True
+RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN = 75
+RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN = 30
+RIGHT_ISOLATED_HORIZONTAL_MAX_AREA = 220
+RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH = 35
+RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT = 18
+RIGHT_ISOLATED_HORIZONTAL_MIN_MAIN_AREA = 350
+RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y = 200
+
+HORIZONTAL_FLOATING_UPPER_STRIP_GUARD_ENABLE = True
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_AREA = 650
+HORIZONTAL_FLOATING_UPPER_STRIP_MIN_WIDTH = 40
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_WIDTH = 130
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_HEIGHT = 22
+HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN = 35
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN = 90
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL = 35
+HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_LEFT = 130
+HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_RIGHT = 15
+HORIZONTAL_FLOATING_UPPER_STRIP_MIN_CONTEXT_PIXELS = 35
+HORIZONTAL_FLOATING_UPPER_STRIP_MIN_ABOVE_LOCAL_PX = 6
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_DIRECT_CONTACT_PIXELS = 6
 
 
 def normalize_mask(mask):
@@ -67,8 +110,8 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.60):
     result_float = result.astype(np.float32)
 
     result_float[mask_bool] = (
-        (1.0 - alpha) * result_float[mask_bool]
-        + alpha * color_array
+            (1.0 - alpha) * result_float[mask_bool]
+            + alpha * color_array
     )
 
     return np.clip(result_float, 0, 255).astype(np.uint8)
@@ -351,8 +394,8 @@ def score_horizontal_candidate(component_mask, principal_mask, y_center, side):
         return None
 
     if (
-        stats["verticality"] > HORIZONTAL_MAX_COMPONENT_VERTICALITY
-        and stats["width"] < 35
+            stats["verticality"] > HORIZONTAL_MAX_COMPONENT_VERTICALITY
+            and stats["width"] < 35
     ):
         return None
 
@@ -515,14 +558,14 @@ def horizontal_rescue_before_secondary(binary_top2, principal_mask, traveler_poi
 
 
 def draw_horizontal_rescue_debug(
-    crop,
-    principal_mask,
-    rescue_mask,
-    roi_mask,
-    candidate_mask,
-    accepted_mask,
-    rejected_mask,
-    traveler_points=None,
+        crop,
+        principal_mask,
+        rescue_mask,
+        roi_mask,
+        candidate_mask,
+        accepted_mask,
+        rejected_mask,
+        traveler_points=None,
 ):
     result = to_bgr(crop)
 
@@ -545,3 +588,391 @@ def draw_horizontal_merged_debug(crop, merged_mask, traveler_points=None):
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
 
     return result
+
+
+def should_accept_horizontal_rescue(horizontal_result, principal_mask) -> bool:
+    rescue_mask = horizontal_result["rescue_mask"]
+    rescue_area = mask_area(rescue_mask)
+
+    if rescue_area == 0:
+        return False
+
+    principal_area = mask_area(principal_mask)
+    principal_bounds = get_mask_bounds(principal_mask)
+    rescue_bounds = get_mask_bounds(rescue_mask)
+
+    if principal_area == 0 or principal_bounds is None or rescue_bounds is None:
+        return False
+
+    image_height, _ = principal_mask.shape[:2]
+
+    left_gain = max(0, principal_bounds["min_x"] - rescue_bounds["min_x"])
+    right_gain = max(0, rescue_bounds["max_x"] - principal_bounds["max_x"])
+    max_gain = max(left_gain, right_gain)
+
+    if max_gain < HORIZONTAL_RESCUE_MIN_EXTENSION_PX:
+        return False
+
+    if (
+            left_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
+            and right_gain > HORIZONTAL_RESCUE_MAX_BOTH_SIDE_EXTENSION_PX
+    ):
+        return False
+
+    max_allowed_area = max(
+        350,
+        int(round(HORIZONTAL_RESCUE_MAX_AREA_FACTOR * principal_area)),
+    )
+
+    if rescue_area > max_allowed_area:
+        return False
+
+    max_allowed_width = max(
+        HORIZONTAL_RESCUE_MAX_WIDTH_PX,
+        int(round(HORIZONTAL_RESCUE_MAX_WIDTH_FACTOR * principal_bounds["width"])),
+    )
+
+    if rescue_bounds["width"] > max_allowed_width:
+        return False
+
+    max_allowed_height = max(
+        36,
+        int(round(HORIZONTAL_RESCUE_MAX_HEIGHT_FRAC * image_height)),
+    )
+
+    if rescue_bounds["height"] > max_allowed_height:
+        return False
+
+    return True
+
+
+def run_guarded_horizontal_rescue(binary_top2, principal_mask, traveler_points):
+    horizontal_result = horizontal_rescue_before_secondary(
+        binary_top2,
+        principal_mask,
+        traveler_points=traveler_points,
+    )
+
+    if should_accept_horizontal_rescue(horizontal_result, principal_mask):
+        return horizontal_result
+
+    empty = empty_mask_like(principal_mask)
+    rejected_mask = merge_masks(
+        horizontal_result["rejected_mask"],
+        horizontal_result["accepted_mask"],
+    )
+
+    return {
+        "rescue_mask": empty,
+        "merged_mask": principal_mask.copy(),
+        "binary_top2_guarded": binary_top2.copy(),
+        "roi_mask": horizontal_result["roi_mask"],
+        "candidate_mask": horizontal_result["candidate_mask"],
+        "accepted_mask": empty,
+        "rejected_mask": rejected_mask,
+    }
+
+
+def x_overlap_fraction(a, b):
+    left = max(a["x"], b["x"])
+    right = min(a["x2"], b["x2"])
+
+    if right < left:
+        return 0.0
+
+    overlap = right - left + 1
+    min_width = max(min(a["width"], b["width"]), 1)
+
+    return float(overlap / min_width)
+
+
+def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
+    if not HORIZONTAL_LAYERED_TAIL_GUARD_ENABLE:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if horizontal_rescue_mask is None or principal_mask is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if mask_area(horizontal_rescue_mask) == 0 or mask_area(principal_mask) == 0:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_mask)
+
+    if principal_bounds is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (horizontal_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    if num_labels - 1 < HORIZONTAL_LAYERED_TAIL_MIN_COMPONENTS:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    components = []
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+
+        components.append({
+            "label": label,
+            "area": area,
+            "x": x,
+            "y": y,
+            "x2": x2,
+            "y2": y2,
+            "width": width,
+            "height": height,
+            "centroid_y": float(centroids[label][1]),
+        })
+
+    upper_candidates = []
+
+    for component in components:
+        is_upper_shape = (
+                component["area"] >= HORIZONTAL_LAYERED_TAIL_MIN_UPPER_AREA
+                and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_UPPER_HEIGHT
+        )
+
+        is_near_right_end_of_principal = (
+                component["x2"] >= principal_bounds["max_x"] + HORIZONTAL_LAYERED_TAIL_MIN_RIGHT_REGION_GAIN
+        )
+
+        if is_upper_shape and is_near_right_end_of_principal:
+            upper_candidates.append(component)
+
+    if len(upper_candidates) == 0:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    upper = min(upper_candidates, key=lambda item: item["centroid_y"])
+
+    kept = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+
+    for component in components:
+        pixels = labels == component["label"]
+
+        if component["label"] == upper["label"]:
+            kept[pixels] = 255
+            continue
+
+        is_lower_than_upper = (
+                component["centroid_y"] >= upper["centroid_y"] + HORIZONTAL_LAYERED_TAIL_MIN_Y_GAP
+        )
+
+        is_small_or_medium_tail = (
+                component["area"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_AREA
+                and component["height"] <= HORIZONTAL_LAYERED_TAIL_MAX_LOWER_HEIGHT
+        )
+
+        overlap_frac = x_overlap_fraction(component, upper)
+
+        overlaps_upper = overlap_frac >= HORIZONTAL_LAYERED_TAIL_MIN_OVERLAP_FRAC
+
+        right_gap_from_upper = component["x"] - upper["x2"] - 1
+
+        is_right_tail_after_upper = (
+                right_gap_from_upper >= 0
+                and right_gap_from_upper <= HORIZONTAL_LAYERED_TAIL_MAX_RIGHT_GAP_FROM_UPPER
+        )
+
+        if (
+                is_lower_than_upper
+                and is_small_or_medium_tail
+                and (overlaps_upper or is_right_tail_after_upper)
+        ):
+            removed[pixels] = 255
+        else:
+            kept[pixels] = 255
+
+    if mask_area(kept) < 0.20 * mask_area(horizontal_rescue_mask):
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    return kept, removed
+
+
+def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal_mask):
+    if not RIGHT_ISOLATED_HORIZONTAL_COMPONENT_GUARD_ENABLE:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if horizontal_rescue_mask is None or principal_mask is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if mask_area(horizontal_rescue_mask) == 0 or mask_area(principal_mask) == 0:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_mask)
+
+    if principal_bounds is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (horizontal_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    if num_labels <= 2:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    components = []
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+
+        components.append({
+            "label": label,
+            "area": area,
+            "x": x,
+            "x2": x2,
+            "y": y,
+            "y2": y2,
+            "width": width,
+            "height": height,
+        })
+
+    main_component = max(components, key=lambda item: item["area"])
+
+    if main_component["area"] < RIGHT_ISOLATED_HORIZONTAL_MIN_MAIN_AREA:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    kept = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+
+    for component in components:
+        label = component["label"]
+        component_pixels = labels == label
+
+        if label == main_component["label"]:
+            kept[component_pixels] = 255
+            continue
+
+        right_gain = component["x2"] - principal_bounds["max_x"]
+        gap_from_main = component["x"] - main_component["x2"]
+
+        is_small_right_isolated = (
+                component["area"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_AREA
+                and component["width"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_WIDTH
+                and component["height"] <= RIGHT_ISOLATED_HORIZONTAL_MAX_HEIGHT
+                and right_gain >= RIGHT_ISOLATED_HORIZONTAL_MIN_RIGHT_GAIN
+                and gap_from_main >= RIGHT_ISOLATED_HORIZONTAL_MIN_GAP_FROM_MAIN
+                and component["y"] >= RIGHT_ISOLATED_HORIZONTAL_MIN_COMPONENT_Y
+        )
+
+        if is_small_right_isolated:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
+
+def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mask):
+    if not HORIZONTAL_FLOATING_UPPER_STRIP_GUARD_ENABLE:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if horizontal_rescue_mask is None or principal_mask is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    if mask_area(horizontal_rescue_mask) == 0 or mask_area(principal_mask) == 0:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_mask)
+
+    if principal_bounds is None:
+        return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (horizontal_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
+
+    image_h, image_w = horizontal_rescue_mask.shape[:2]
+
+    for label in range(1, num_labels):
+        component_pixels = labels == label
+
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+
+        component_median_y = float(centroids[label][1])
+
+        right_gain = x2 - principal_bounds["max_x"]
+
+        size_matches = (
+                area <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_AREA
+                and width >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_WIDTH
+                and width <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_WIDTH
+                and height <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_HEIGHT
+        )
+
+        starts_near_principal_edge = (
+                x <= principal_bounds["max_x"] + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
+        )
+
+        extends_right = (
+                right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
+                and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
+                and starts_near_principal_edge
+        )
+
+        x1_context = max(0, x - HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_LEFT)
+        x2_context = min(image_w, x + HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_RIGHT + 1)
+
+        context = principal_mask[:, x1_context:x2_context]
+        context_ys, context_xs = np.where(context > 0)
+
+        has_context = len(context_ys) >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_CONTEXT_PIXELS
+
+        if has_context:
+            local_reference_y = float(np.median(context_ys))
+        else:
+            local_reference_y = None
+
+        is_above_local_principal_band = (
+                local_reference_y is not None
+                and component_median_y <= local_reference_y - HORIZONTAL_FLOATING_UPPER_STRIP_MIN_ABOVE_LOCAL_PX
+        )
+
+        dilated_principal = cv2.dilate(
+            (principal_mask > 0).astype(np.uint8),
+            np.ones((3, 3), dtype=np.uint8),
+            iterations=1,
+        )
+        direct_contact_pixels = int(
+            np.count_nonzero((component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0))
+        )
+
+        lacks_direct_contact = (
+                direct_contact_pixels <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_DIRECT_CONTACT_PIXELS
+        )
+
+        if size_matches and extends_right and has_context and is_above_local_principal_band and lacks_direct_contact:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    if mask_area(removed) == mask_area(horizontal_rescue_mask):
+        if mask_area(horizontal_rescue_mask) > HORIZONTAL_FLOATING_UPPER_STRIP_MAX_AREA:
+            return horizontal_rescue_mask, empty_mask_like(horizontal_rescue_mask)
+
+    return kept, removed

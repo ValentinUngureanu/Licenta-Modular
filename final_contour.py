@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+from postprocessing import empty_mask_like, mask_area
 
 FINAL_MASK_COLOR = (0, 255, 0)
 FINAL_CONTOUR_COLOR = (0, 0, 255)
@@ -14,6 +15,14 @@ FINAL_CLOSE_KERNEL_HEIGHT = 3
 FINAL_CLOSE_ITERATIONS = 1
 
 FINAL_CONTOUR_THICKNESS = 1
+
+SMALL_COMPONENT_CLEAN_ENABLE = True
+SMALL_COMPONENT_MIN_AREA = 28
+SMALL_COMPONENT_MIN_WIDTH = 7
+SMALL_COMPONENT_MIN_HEIGHT = 4
+SMALL_COMPONENT_REMOVE_COMPACT_AREA = 35
+SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH = 14
+SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT = 14
 
 
 def normalize_binary_mask(mask):
@@ -231,3 +240,45 @@ def draw_final_contour_on_original(
         original_image,
         projected_mask,
     )
+
+def remove_very_small_components(mask):
+    if not SMALL_COMPONENT_CLEAN_ENABLE:
+        return mask, empty_mask_like(mask)
+
+    if mask is None or mask_area(mask) == 0:
+        return mask, empty_mask_like(mask)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        (mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    cleaned = np.zeros_like(mask, dtype=np.uint8)
+    removed = np.zeros_like(mask, dtype=np.uint8)
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        component_pixels = labels == label
+
+        is_tiny = (
+                area < SMALL_COMPONENT_MIN_AREA
+                or width < SMALL_COMPONENT_MIN_WIDTH
+                or height < SMALL_COMPONENT_MIN_HEIGHT
+        )
+
+        is_compact_speckle = (
+                area < SMALL_COMPONENT_REMOVE_COMPACT_AREA
+                and width <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_WIDTH
+                and height <= SMALL_COMPONENT_REMOVE_COMPACT_MAX_HEIGHT
+        )
+
+        if is_tiny or is_compact_speckle:
+            removed[component_pixels] = 255
+        else:
+            cleaned[component_pixels] = 255
+
+    return cleaned, removed
+

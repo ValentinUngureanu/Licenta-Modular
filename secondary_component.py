@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from postprocessing import empty_mask_like, mask_median_y, get_mask_bounds, mask_area
+
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 MERGED_COLOR = (0, 255, 0)
@@ -49,6 +51,25 @@ SECONDARY_UPPER_ARTIFACT_MIN_GAP_PX = 5
 
 MODEL_DEGREE_2_MIN_WIDTH_FRAC = 0.22
 MODEL_DEGREE_2_MIN_POINTS = 45
+
+SECONDARY_AFTER_HORIZONTAL_TAIL_GUARD_ENABLE = True
+SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_HORIZONTAL_AREA = 150
+SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA = 220
+SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH = 45
+SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT = 28
+SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP = -2
+SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX = 32
+
+SECONDARY_FLOATING_STRIP_AFTER_HORIZONTAL_REJECT_ENABLE = True
+
+SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA = 260
+SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH = 60
+SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT = 35
+SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN = 55
+
+HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN = 35
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN = 90
+HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL = 35
 
 
 def normalize_binary_mask(binary_mask):
@@ -721,3 +742,193 @@ def draw_merged_components(base_image, merged_mask, traveler_points=None):
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
 
     return result
+
+def filter_secondary_tail_after_horizontal(
+        secondary_mask,
+        horizontal_rescue_mask,
+):
+    if not SECONDARY_AFTER_HORIZONTAL_TAIL_GUARD_ENABLE:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    if secondary_mask is None or horizontal_rescue_mask is None:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    if mask_area(secondary_mask) == 0:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    horizontal_bounds = get_mask_bounds(horizontal_rescue_mask)
+    horizontal_median_y = mask_median_y(horizontal_rescue_mask)
+
+    if horizontal_bounds is None or horizontal_median_y is None:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    if horizontal_bounds["area"] < SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_HORIZONTAL_AREA:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (secondary_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(secondary_mask, dtype=np.uint8)
+    removed = np.zeros_like(secondary_mask, dtype=np.uint8)
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        y2 = y + height - 1
+
+        component_pixels = labels == label
+        component_median_y = float(centroids[label][1])
+
+        is_small_tail = (
+                area <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_AREA
+                and width <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_WIDTH
+                and height <= SECONDARY_AFTER_HORIZONTAL_TAIL_MAX_HEIGHT
+        )
+
+        starts_after_horizontal_end = (
+                x >= horizontal_bounds["max_x"] + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_RIGHT_GAP
+        )
+
+        is_far_below_horizontal = (
+                component_median_y >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX
+                or y2 >= horizontal_median_y + SECONDARY_AFTER_HORIZONTAL_TAIL_MIN_BELOW_HORIZONTAL_PX + 8
+        )
+
+        vertical_overlap_top = max(y, horizontal_bounds["min_y"])
+        vertical_overlap_bottom = min(y2, horizontal_bounds["max_y"])
+        vertical_overlap = max(0, vertical_overlap_bottom - vertical_overlap_top + 1)
+        vertical_overlap_frac = vertical_overlap / max(height, 1)
+
+        is_thin_edge_fragment = (
+                area <= 90
+                and width <= 28
+                and height <= 10
+        )
+
+        is_only_touching_horizontal_edge = (
+                vertical_overlap_frac <= 0.30
+                or y2 <= horizontal_bounds["min_y"] + 1
+        )
+
+        is_after_or_at_horizontal_end = (
+                x >= horizontal_bounds["max_x"] - 1
+        )
+
+        remove_low_tail = (
+                is_small_tail
+                and starts_after_horizontal_end
+                and is_far_below_horizontal
+        )
+
+        remove_thin_edge_tail = (
+                is_thin_edge_fragment
+                and is_after_or_at_horizontal_end
+                and is_only_touching_horizontal_edge
+        )
+
+        if remove_low_tail or remove_thin_edge_tail:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
+def interval_overlap_fraction(a_min, a_max, b_min, b_max, width_a):
+    left = max(a_min, b_min)
+    right = min(a_max, b_max)
+
+    if right < left:
+        return 0.0
+
+    return float((right - left + 1) / max(width_a, 1))
+
+def filter_secondary_floating_strip_after_horizontal_reject(
+        secondary_mask,
+        principal_mask,
+):
+    if not SECONDARY_FLOATING_STRIP_AFTER_HORIZONTAL_REJECT_ENABLE:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    if secondary_mask is None or principal_mask is None:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    if mask_area(secondary_mask) == 0 or mask_area(principal_mask) == 0:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    principal_bounds = get_mask_bounds(principal_mask)
+    principal_median_y = mask_median_y(principal_mask)
+
+    if principal_bounds is None or principal_median_y is None:
+        return secondary_mask, empty_mask_like(secondary_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (secondary_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(secondary_mask, dtype=np.uint8)
+    removed = np.zeros_like(secondary_mask, dtype=np.uint8)
+
+    dilated_principal = cv2.dilate(
+        (principal_mask > 0).astype(np.uint8),
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=1,
+    )
+
+    for label in range(1, num_labels):
+        component_pixels = labels == label
+
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x2 = x + width - 1
+        y2 = y + height - 1
+
+        component_median_y = float(centroids[label][1])
+        right_gain = x2 - principal_bounds["max_x"]
+        starts_near_principal_edge = (
+                x <= principal_bounds["max_x"] + HORIZONTAL_FLOATING_UPPER_STRIP_MAX_START_GAP_FROM_PRINCIPAL
+        )
+        moderate_right_gain = (
+                right_gain >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_RIGHT_GAIN
+                and right_gain <= HORIZONTAL_FLOATING_UPPER_STRIP_MAX_RIGHT_GAIN
+                and starts_near_principal_edge
+        )
+
+        contact_pixels = int(
+            np.count_nonzero((component_pixels.astype(np.uint8) > 0) & (dilated_principal > 0))
+        )
+
+        is_long_thin_right_strip = (
+                250 <= area <= 850
+                and 45 <= width <= 150
+                and height <= 20
+                and moderate_right_gain
+                and contact_pixels <= 12
+        )
+
+        is_low_tail_after_right_extension = (
+                area <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_AREA
+                and width <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_WIDTH
+                and height <= SECONDARY_LOW_TAIL_AFTER_STRIP_MAX_HEIGHT
+                and moderate_right_gain
+                and right_gain >= SECONDARY_LOW_TAIL_AFTER_STRIP_MIN_RIGHT_GAIN
+                and (
+                        component_median_y >= principal_median_y + 40
+                        or y2 >= principal_median_y + 50
+                )
+        )
+
+        if is_long_thin_right_strip or is_low_tail_after_right_extension:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed

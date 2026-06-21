@@ -1,6 +1,12 @@
 import cv2
 import numpy as np
 
+from postprocessing import (
+    empty_mask_like,
+    get_mask_bounds,
+    mask_area,
+)
+
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 RESCUE_COLOR = (255, 0, 255)
@@ -41,6 +47,28 @@ GAP_LOCAL_EDGE_MAX_ABOVE_EDGE_PX = 28
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_AREA = 80
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_WIDTH = 22
 GAP_LOCAL_EDGE_PROTECT_SMALL_BRIDGE_HEIGHT = 9
+
+GAP_FLOATING_RIGHT_GUARD_ENABLE = True
+GAP_FLOATING_RIGHT_MIN_AREA = 250
+GAP_FLOATING_RIGHT_MAX_AREA = 1200
+GAP_FLOATING_RIGHT_MIN_WIDTH = 35
+GAP_FLOATING_RIGHT_MAX_WIDTH = 140
+GAP_FLOATING_RIGHT_MAX_HEIGHT = 55
+GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL = 18
+GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW = 90
+GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND = 35
+GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS = 8
+
+GAP_UPPER_RIGHT_GUARD_ENABLE = True
+GAP_UPPER_RIGHT_MIN_AREA = 120
+GAP_UPPER_RIGHT_MAX_AREA = 900
+GAP_UPPER_RIGHT_MIN_WIDTH = 12
+GAP_UPPER_RIGHT_MAX_WIDTH = 120
+GAP_UPPER_RIGHT_MAX_HEIGHT = 60
+GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL = 8
+GAP_UPPER_RIGHT_CONTEXT_WINDOW = 120
+GAP_UPPER_RIGHT_MIN_CONTEXT_PIXELS = 20
+GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX = 35
 
 
 def normalize_mask(mask):
@@ -548,3 +576,170 @@ def draw_gap_merged_debug(crop, merged_mask, traveler_points=None):
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
 
     return result
+
+def filter_floating_right_gap_rescue(
+        gap_rescue_mask,
+        principal_after_horizontal_mask,
+        secondary_mask_normal,
+):
+    if not GAP_FLOATING_RIGHT_GUARD_ENABLE:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if gap_rescue_mask is None or principal_after_horizontal_mask is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
+
+    if principal_bounds is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    support_mask = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    support_mask[principal_after_horizontal_mask > 0] = 255
+
+    if secondary_mask_normal is not None:
+        support_mask[secondary_mask_normal > 0] = 255
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (gap_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+
+    height_img, width_img = gap_rescue_mask.shape[:2]
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        x2 = x + width - 1
+        y2 = y + height - 1
+        component_median_y = float(centroids[label][1])
+        component_pixels = labels == label
+
+        right_gap_from_principal = x - principal_bounds["max_x"] - 1
+
+        size_matches = (
+                area >= GAP_FLOATING_RIGHT_MIN_AREA
+                and area <= GAP_FLOATING_RIGHT_MAX_AREA
+                and width >= GAP_FLOATING_RIGHT_MIN_WIDTH
+                and width <= GAP_FLOATING_RIGHT_MAX_WIDTH
+                and height <= GAP_FLOATING_RIGHT_MAX_HEIGHT
+        )
+
+        is_right_of_principal = (
+                right_gap_from_principal >= GAP_FLOATING_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+        )
+
+        y1_support = max(0, int(round(component_median_y)) - GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND)
+        y2_support = min(height_img, int(round(component_median_y)) + GAP_FLOATING_RIGHT_LEFT_SUPPORT_Y_BAND + 1)
+        x1_support = max(0, x - GAP_FLOATING_RIGHT_LEFT_SUPPORT_WINDOW)
+        x2_support = max(0, x)
+
+        left_support_pixels = 0
+
+        if x2_support > x1_support and y2_support > y1_support:
+            left_support_pixels = int(
+                np.count_nonzero(support_mask[y1_support:y2_support, x1_support:x2_support] > 0)
+            )
+
+        lacks_local_left_support = (
+                left_support_pixels < GAP_FLOATING_RIGHT_MIN_LEFT_SUPPORT_PIXELS
+        )
+
+        if size_matches and is_right_of_principal and lacks_local_left_support:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
+def filter_upper_right_gap_rescue(
+        gap_rescue_mask,
+        principal_after_horizontal_mask,
+        secondary_mask_normal,
+):
+    if not GAP_UPPER_RIGHT_GUARD_ENABLE:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if gap_rescue_mask is None or principal_after_horizontal_mask is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    if mask_area(gap_rescue_mask) == 0 or mask_area(principal_after_horizontal_mask) == 0:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    principal_bounds = get_mask_bounds(principal_after_horizontal_mask)
+
+    if principal_bounds is None:
+        return gap_rescue_mask, empty_mask_like(gap_rescue_mask)
+
+    support_mask = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    support_mask[principal_after_horizontal_mask > 0] = 255
+
+    if secondary_mask_normal is not None:
+        support_mask[secondary_mask_normal > 0] = 255
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (gap_rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
+
+    image_h, image_w = gap_rescue_mask.shape[:2]
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        component_pixels = labels == label
+        component_median_y = float(centroids[label][1])
+
+        right_gap_from_principal = x - principal_bounds["max_x"] - 1
+
+        size_matches = (
+                area >= GAP_UPPER_RIGHT_MIN_AREA
+                and area <= GAP_UPPER_RIGHT_MAX_AREA
+                and width >= GAP_UPPER_RIGHT_MIN_WIDTH
+                and width <= GAP_UPPER_RIGHT_MAX_WIDTH
+                and height <= GAP_UPPER_RIGHT_MAX_HEIGHT
+        )
+
+        is_right_of_principal = (
+                right_gap_from_principal >= GAP_UPPER_RIGHT_MIN_RIGHT_GAP_FROM_PRINCIPAL
+        )
+
+        x1_context = max(0, x - GAP_UPPER_RIGHT_CONTEXT_WINDOW)
+        x2_context = min(image_w, x + 1)
+
+        context_region = support_mask[:, x1_context:x2_context]
+        context_ys, context_xs = np.where(context_region > 0)
+
+        has_context = len(context_ys) >= GAP_UPPER_RIGHT_MIN_CONTEXT_PIXELS
+
+        if has_context:
+            local_reference_y = float(np.median(context_ys))
+        else:
+            local_reference_y = None
+
+        is_much_above_local_direction = (
+                local_reference_y is not None
+                and component_median_y <= local_reference_y - GAP_UPPER_RIGHT_MIN_ABOVE_LOCAL_PX
+        )
+
+        if size_matches and is_right_of_principal and has_context and is_much_above_local_direction:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed

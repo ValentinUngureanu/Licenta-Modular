@@ -1,6 +1,16 @@
 import cv2
 import numpy as np
 
+
+from postprocessing import (
+    empty_mask_like,
+    get_mask_bounds,
+    mask_area,
+    mask_density,
+    mask_median_y,
+    merge_masks,
+)
+
 PRINCIPAL_COLOR = (0, 255, 0)
 SECONDARY_COLOR = (0, 255, 255)
 RESCUE_COLOR = (255, 0, 255)
@@ -56,6 +66,20 @@ GUARD_ENABLE = True
 GUARD_MAX_SECONDARY_TO_PRINCIPAL_AREA = 2.75
 GUARD_MAX_SECONDARY_TO_PRINCIPAL_WIDTH = 1.45
 GUARD_KEEP_NEAR_HALF_HEIGHT_MULTIPLIER = 1.10
+
+SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO = 3.0
+SECONDARY_RESCUE_OVERGROWTH_MIN_AREA = 9000
+SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY = 0.18
+SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT = 125
+SECONDARY_RESCUE_MIN_KEEP_FRAC_WHEN_NOT_OVERGROWN = 0.65
+SECONDARY_RESCUE_MIN_WIDTH_KEEP_FRAC_WHEN_NOT_OVERGROWN = 0.88
+
+RIGHT_ISOLATED_SECONDARY_RESCUE_GUARD_ENABLE = True
+RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX = 60
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA = 650
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH = 130
+RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT = 80
+RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX = 45
 
 
 def normalize_binary_mask(mask):
@@ -706,11 +730,10 @@ def guard_overgrown_secondary(principal_mask, secondary_mask):
     return filtered_secondary, removed_mask, True
 
 
-def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, merged_mask, traveler_points):
+def rescue_after_secondary(binary_top2, principal_mask, secondary_mask, traveler_points):
     binary_top2 = normalize_binary_mask(binary_top2)
     principal_mask = normalize_binary_mask(principal_mask)
     secondary_mask = normalize_binary_mask(secondary_mask)
-    merged_mask = normalize_binary_mask(merged_mask)
 
     secondary_mask, removed_secondary_mask, guard_triggered = guard_overgrown_secondary(
         principal_mask,
@@ -834,3 +857,166 @@ def draw_merged_after_rescue(base_image, merged_mask, traveler_points=None):
         result = draw_points(result, traveler_points, TRAVELER_COLOR, radius=1)
 
     return result
+
+def should_accept_secondary_rescue(
+        principal_mask,
+        secondary_mask_before_rescue,
+        merged_before_rescue,
+        secondary_rescue_result,
+) -> bool:
+    principal_area = mask_area(principal_mask)
+    secondary_before_area = mask_area(secondary_mask_before_rescue)
+    secondary_after_area = mask_area(secondary_rescue_result["secondary_mask"])
+    removed_area = mask_area(secondary_rescue_result["removed_secondary_mask"])
+    rescue_area = mask_area(secondary_rescue_result["rescue_mask"])
+
+    if principal_area == 0:
+        return False
+
+    if secondary_before_area == 0:
+        max_rescue_area = max(600, int(round(1.20 * principal_area)))
+        return 0 < rescue_area <= max_rescue_area
+
+    secondary_before_bounds = get_mask_bounds(secondary_mask_before_rescue)
+    secondary_before_density = mask_density(secondary_mask_before_rescue)
+
+    overgrown_secondary = (
+            secondary_before_area >= SECONDARY_RESCUE_OVERGROWTH_MIN_AREA
+            and secondary_before_area > SECONDARY_RESCUE_OVERGROWTH_AREA_RATIO * principal_area
+            and secondary_before_bounds is not None
+            and (
+                    secondary_before_density >= SECONDARY_RESCUE_OVERGROWTH_MIN_DENSITY
+                    or secondary_before_bounds["height"] >= SECONDARY_RESCUE_OVERGROWTH_MIN_HEIGHT
+            )
+    )
+
+    if overgrown_secondary:
+        return True
+
+    if removed_area > 0:
+        min_allowed_after_area = int(
+            round(
+                SECONDARY_RESCUE_MIN_KEEP_FRAC_WHEN_NOT_OVERGROWN
+                * secondary_before_area
+            )
+        )
+
+        if secondary_after_area < min_allowed_after_area:
+            return False
+
+        before_bounds = get_mask_bounds(merged_before_rescue)
+        after_bounds = get_mask_bounds(secondary_rescue_result["merged_mask"])
+
+        if before_bounds is not None and after_bounds is not None:
+            min_allowed_width = int(
+                round(
+                    SECONDARY_RESCUE_MIN_WIDTH_KEEP_FRAC_WHEN_NOT_OVERGROWN
+                    * before_bounds["width"]
+                )
+            )
+
+            if after_bounds["width"] < min_allowed_width:
+                return False
+
+    return True
+
+def run_guarded_secondary_rescue(
+        binary_top2_guarded,
+        principal_after_horizontal_mask,
+        secondary_mask_before_rescue,
+        merged_before_secondary_rescue,
+        traveler_points,
+):
+    secondary_rescue_result = rescue_after_secondary(
+        binary_top2=binary_top2_guarded,
+        principal_mask=principal_after_horizontal_mask,
+        secondary_mask=secondary_mask_before_rescue,
+        traveler_points=traveler_points,
+    )
+
+    if should_accept_secondary_rescue(
+            principal_after_horizontal_mask,
+            secondary_mask_before_rescue,
+            merged_before_secondary_rescue,
+            secondary_rescue_result,
+    ):
+        return secondary_rescue_result
+
+    empty = empty_mask_like(principal_after_horizontal_mask)
+    rejected_mask = merge_masks(
+        secondary_rescue_result["rejected_mask"],
+        secondary_rescue_result["accepted_mask"],
+    )
+    rejected_mask = merge_masks(
+        rejected_mask,
+        secondary_rescue_result["removed_secondary_mask"],
+    )
+
+    return {
+        "secondary_mask": secondary_mask_before_rescue.copy(),
+        "rescue_mask": empty,
+        "merged_mask": merged_before_secondary_rescue.copy(),
+        "removed_secondary_mask": empty,
+        "roi_mask": secondary_rescue_result["roi_mask"],
+        "candidate_mask": secondary_rescue_result["candidate_mask"],
+        "rejected_mask": rejected_mask,
+        "accepted_mask": empty,
+        "changed": False,
+        "guard_triggered": False,
+        "added_components": [],
+    }
+
+def filter_right_isolated_secondary_rescue(rescue_mask, base_mask):
+    if not RIGHT_ISOLATED_SECONDARY_RESCUE_GUARD_ENABLE:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    if rescue_mask is None or base_mask is None:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    if mask_area(rescue_mask) == 0 or mask_area(base_mask) == 0:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    base_bounds = get_mask_bounds(base_mask)
+    base_median_y = mask_median_y(base_mask)
+
+    if base_bounds is None or base_median_y is None:
+        return rescue_mask, empty_mask_like(rescue_mask)
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        (rescue_mask > 0).astype(np.uint8),
+        connectivity=8,
+    )
+
+    kept = np.zeros_like(rescue_mask, dtype=np.uint8)
+    removed = np.zeros_like(rescue_mask, dtype=np.uint8)
+
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        component_median_y = float(centroids[label][1])
+        component_pixels = labels == label
+
+        right_gap = x - base_bounds["max_x"] - 1
+
+        is_right_isolated = right_gap >= RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_GAP_PX
+
+        is_small_enough = (
+                area <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_AREA
+                and width <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_WIDTH
+                and height <= RIGHT_ISOLATED_SECONDARY_RESCUE_MAX_HEIGHT
+        )
+
+        is_much_lower = (
+                component_median_y >= base_median_y + RIGHT_ISOLATED_SECONDARY_RESCUE_MIN_BELOW_MEDIAN_PX
+        )
+
+        if is_right_isolated and is_small_enough and is_much_lower:
+            removed[component_pixels] = 255
+        else:
+            kept[component_pixels] = 255
+
+    return kept, removed
+
