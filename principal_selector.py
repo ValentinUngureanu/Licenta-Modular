@@ -191,7 +191,7 @@ def build_lower_search_roi(binary_top2, principal_mask):
 def component_top_edge_points(mask):
     ys_all = []
     xs_all = []
-    height, width = mask.shape[:2]
+    _, width = mask.shape[:2]
 
     for x in range(width):
         ys = np.where(mask[:, x] > 0)[0]
@@ -346,7 +346,7 @@ def build_controlled_pleura_complex(anchor_mask, search_mask):
     selected = np.zeros_like(anchor_mask, dtype=np.uint8)
     accepted_components = []
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(linked_complex, 8)
+    num_labels, labels, _, _ = cv2.connectedComponentsWithStats(linked_complex, 8)
 
     for label in range(1, num_labels):
         linked_component = np.zeros_like(anchor_mask, dtype=np.uint8)
@@ -568,7 +568,7 @@ def build_principal_candidates(binary_top2, principal_mask):
         search_mask, cv2.MORPH_CLOSE, close_kernel, iterations=1
     )
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
+    num_labels, labels, _, _ = cv2.connectedComponentsWithStats(linked_mask, 8)
 
     dilate_kernel = cv2.getStructuringElement(
         cv2.MORPH_RECT,

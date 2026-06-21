@@ -611,17 +611,14 @@ def filter_floating_right_gap_rescue(
     kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
     removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
 
-    height_img, width_img = gap_rescue_mask.shape[:2]
+    height_img, _ = gap_rescue_mask.shape[:2]
 
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
 
-        x + width - 1
-        y + height - 1
         component_median_y = float(centroids[label][1])
         component_pixels = labels == label
 
@@ -706,12 +703,11 @@ def filter_upper_right_gap_rescue(
     kept = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
     removed = np.zeros_like(gap_rescue_mask, dtype=np.uint8)
 
-    image_h, image_w = gap_rescue_mask.shape[:2]
+    _, image_w = gap_rescue_mask.shape[:2]
 
     for label in range(1, num_labels):
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         component_pixels = labels == label
@@ -735,7 +731,7 @@ def filter_upper_right_gap_rescue(
         x2_context = min(image_w, x + 1)
 
         context_region = support_mask[:, x1_context:x2_context]
-        context_ys, context_xs = np.where(context_region > 0)
+        context_ys, _ = np.where(context_region > 0)
 
         has_context = len(context_ys) >= GAP_UPPER_RIGHT_MIN_CONTEXT_PIXELS
 

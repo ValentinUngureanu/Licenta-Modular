@@ -1,8 +1,7 @@
 import cv2
 import numpy as np
 
-from gap_rescue import mask_area
-from postprocessing import empty_mask_like, get_mask_bounds
+from postprocessing import empty_mask_like, get_mask_bounds, mask_area
 
 PRINCIPAL_COLOR = (0, 255, 0)
 RESCUE_COLOR = (255, 0, 255)
@@ -719,8 +718,6 @@ def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         x2 = x + width - 1
-        y2 = y + height - 1
-
         components.append(
             {
                 "label": label,
@@ -728,7 +725,6 @@ def filter_layered_horizontal_tail(horizontal_rescue_mask, principal_mask):
                 "x": x,
                 "y": y,
                 "x2": x2,
-                "y2": y2,
                 "width": width,
                 "height": height,
                 "centroid_y": float(centroids[label][1]),
@@ -834,8 +830,6 @@ def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         x2 = x + width - 1
-        y2 = y + height - 1
-
         components.append(
             {
                 "label": label,
@@ -843,7 +837,6 @@ def filter_right_isolated_horizontal_component(horizontal_rescue_mask, principal
                 "x": x,
                 "x2": x2,
                 "y": y,
-                "y2": y2,
                 "width": width,
                 "height": height,
             }
@@ -908,18 +901,16 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
     kept = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
     removed = np.zeros_like(horizontal_rescue_mask, dtype=np.uint8)
 
-    image_h, image_w = horizontal_rescue_mask.shape[:2]
+    _, image_w = horizontal_rescue_mask.shape[:2]
 
     for label in range(1, num_labels):
         component_pixels = labels == label
 
         area = int(stats[label, cv2.CC_STAT_AREA])
         x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
         width = int(stats[label, cv2.CC_STAT_WIDTH])
         height = int(stats[label, cv2.CC_STAT_HEIGHT])
         x2 = x + width - 1
-        y + height - 1
 
         component_median_y = float(centroids[label][1])
 
@@ -948,7 +939,7 @@ def filter_floating_upper_horizontal_strip(horizontal_rescue_mask, principal_mas
         x2_context = min(image_w, x + HORIZONTAL_FLOATING_UPPER_STRIP_CONTEXT_RIGHT + 1)
 
         context = principal_mask[:, x1_context:x2_context]
-        context_ys, context_xs = np.where(context > 0)
+        context_ys, _ = np.where(context > 0)
 
         has_context = (
             len(context_ys) >= HORIZONTAL_FLOATING_UPPER_STRIP_MIN_CONTEXT_PIXELS

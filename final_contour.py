@@ -202,6 +202,8 @@ def draw_final_mask_on_crop(crop_image, final_mask):
 
 
 def draw_final_contour_on_crop(crop_image, final_mask, contour_points=None):
+    _ = contour_points
+
     return draw_contours_around_mask(
         crop_image,
         final_mask,
@@ -229,6 +231,8 @@ def draw_final_contour_on_original(
     contour_points_crop,
     crop_box,
 ):
+    _ = contour_points_crop
+
     projected_mask = project_mask_to_original(
         final_mask_crop,
         original_image.shape,

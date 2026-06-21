@@ -67,7 +67,7 @@ def normalize_binary_mask(binary_mask):
 
 def extract_raw_traveler_points(binary_mask):
     binary = normalize_binary_mask(binary_mask)
-    height, width = binary.shape[:2]
+    _, width = binary.shape[:2]
 
     points = []
 
@@ -291,7 +291,7 @@ def clean_component_core(points, image_shape):
 
 
 def fit_traveler_model(points, image_shape):
-    height, width = image_shape[:2]
+    _, width = image_shape[:2]
 
     if points is None or len(points) == 0:
 

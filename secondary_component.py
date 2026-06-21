@@ -277,7 +277,7 @@ def build_side_roi(search_binary_mask, current_mask, current_points, side):
     if bounds is None:
         return roi_mask, None, 0
 
-    predict, degree = fit_secondary_model(current_points, search_binary.shape)
+    predict, _ = fit_secondary_model(current_points, search_binary.shape)
     half_height = estimate_secondary_band_half_height(
         current_points,
         predict,
@@ -302,7 +302,7 @@ def build_side_roi(search_binary_mask, current_mask, current_points, side):
     xs = np.arange(x1, x2 + 1, dtype=np.float32)
     ys = predict(xs)
 
-    for x, center_y in zip(xs.astype(np.int32), ys, strict=False):
+    for x, center_y in zip(xs.astype(np.int32), ys):
         cy = int(round(center_y))
 
         top = max(0, cy - half_height)
@@ -623,11 +623,6 @@ def build_secondary_components(
 
     added_components = []
 
-    current_points = mask_to_bottom_points(current_mask)
-
-    if len(current_points) < 8 and traveler_points is not None:
-        current_points = np.asarray(traveler_points, dtype=np.int32)
-
     for iteration in range(SECONDARY_MAX_ITERATIONS):
         added_this_round = False
 
@@ -833,16 +828,6 @@ def filter_secondary_tail_after_horizontal(
             kept[component_pixels] = 255
 
     return kept, removed
-
-
-def interval_overlap_fraction(a_min, a_max, b_min, b_max, width_a):
-    left = max(a_min, b_min)
-    right = min(a_max, b_max)
-
-    if right < left:
-        return 0.0
-
-    return float((right - left + 1) / max(width_a, 1))
 
 
 def filter_secondary_floating_strip_after_horizontal_reject(

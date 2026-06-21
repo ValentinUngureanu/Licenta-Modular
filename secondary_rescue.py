@@ -683,7 +683,7 @@ def should_try_lateral_rescue(merged_mask):
     if bounds is None:
         return False
 
-    height, width = merged_mask.shape[:2]
+    _, width = merged_mask.shape[:2]
     width_frac = bounds["width"] / max(width, 1)
     left_free = bounds["min_x"] / max(width, 1)
     right_free = (width - 1 - bounds["max_x"]) / max(width, 1)

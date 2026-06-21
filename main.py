@@ -36,13 +36,6 @@ from image_io import (
     read_image_bgr,
     save_image,
 )
-from postprocessing import (
-    draw_artifact_source_overlay,
-    filter_left_low_far_artifact_components,
-    filter_principal_tail_under_horizontal,
-    mask_area,
-    merge_masks,
-)
 from preprocessing import preprocess_crop
 from principal_component import (
     build_principal_component,
@@ -100,7 +93,41 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
+FINAL_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
+
+OUTPUT_DIRS = (
+    CROP_DIR,
+    PALETTE_7_DIR,
+    BINARY_TOP1_DIR,
+    BINARY_TOP2_DIR,
+    TRAVELER_DIR,
+    PRINCIPAL_DIR,
+    PRINCIPAL_SELECTOR_DIR,
+    HORIZONTAL_RESCUE_DIR,
+    BINARY_TOP2_GUARDED_DIR,
+    SECONDARY_ROI_DIR,
+    SECONDARY_CANDIDATES_DIR,
+    SECONDARY_DIR,
+    GAP_RESCUE_DIR,
+    MERGED_BEFORE_SECONDARY_RESCUE_DIR,
+    SECONDARY_RESCUE_DIR,
+    MERGED_FINAL_DIR,
+    SMALL_COMPONENT_CLEAN_DIR,
+    SOURCE_ORIGIN_DEBUG_DIR,
+    FINAL_MASK_CROP_DIR,
+    FINAL_CONTOUR_CROP_DIR,
+    FINAL_MASK_ORIGINAL_DIR,
+    FINAL_CONTOUR_ORIGINAL_DIR,
+    FINAL_BINARY_ORIGINAL_DIR,
+)
+
+from postprocessing import (
+    draw_artifact_source_overlay,
+    filter_left_low_far_artifact_components,
+    filter_principal_tail_under_horizontal,
+    mask_area,
+    merge_masks,
+)
 
 
 def process_image(index: int, current: int, total: int) -> None:
@@ -633,8 +660,14 @@ def process_image(index: int, current: int, total: int) -> None:
 def reset_dir(path):
     if path.exists():
         shutil.rmtree(path)
+
     ensure_dir(path)
     return path
+
+
+def ensure_output_dirs() -> None:
+    for directory in OUTPUT_DIRS:
+        ensure_dir(directory)
 
 
 def make_final_contours_contact_sheet(exclude_indices=None):
@@ -720,35 +753,13 @@ def make_final_contours_contact_sheet(exclude_indices=None):
 
         sheet[y0 : y0 + tile.shape[0], x0 : x0 + tile.shape[1]] = tile
 
-    save_image(REST_CONTACT_SHEET_PATH, sheet)
+    save_image(FINAL_CONTACT_SHEET_PATH, sheet)
 
 
 def main() -> None:
     reset_dir(config.RESULTS_DIR)
 
-    ensure_dir(CROP_DIR)
-    ensure_dir(PALETTE_7_DIR)
-    ensure_dir(BINARY_TOP1_DIR)
-    ensure_dir(BINARY_TOP2_DIR)
-    ensure_dir(TRAVELER_DIR)
-    ensure_dir(PRINCIPAL_DIR)
-    ensure_dir(PRINCIPAL_SELECTOR_DIR)
-    ensure_dir(HORIZONTAL_RESCUE_DIR)
-    ensure_dir(BINARY_TOP2_GUARDED_DIR)
-    ensure_dir(SECONDARY_ROI_DIR)
-    ensure_dir(SECONDARY_CANDIDATES_DIR)
-    ensure_dir(SECONDARY_DIR)
-    ensure_dir(GAP_RESCUE_DIR)
-    ensure_dir(MERGED_BEFORE_SECONDARY_RESCUE_DIR)
-    ensure_dir(SECONDARY_RESCUE_DIR)
-    ensure_dir(MERGED_FINAL_DIR)
-    ensure_dir(SMALL_COMPONENT_CLEAN_DIR)
-    ensure_dir(SOURCE_ORIGIN_DEBUG_DIR)
-    ensure_dir(FINAL_MASK_CROP_DIR)
-    ensure_dir(FINAL_CONTOUR_CROP_DIR)
-    ensure_dir(FINAL_MASK_ORIGINAL_DIR)
-    ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
-    ensure_dir(FINAL_BINARY_ORIGINAL_DIR)
+    ensure_output_dirs()
 
     indices = get_indices_to_process()
 
