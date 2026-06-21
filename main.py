@@ -64,6 +64,8 @@ from secondary_rescue import (
     filter_right_isolated_secondary_rescue,
     run_guarded_secondary_rescue,
 )
+from top2_final_contour import build_top2_final_contour
+from top2_pleura import build_top2_guided_pleura
 from traveler import build_traveler, draw_extended_component
 
 FINAL_TEST_DIR = config.RESULTS_DIR / "06_FINAL_CONTOUR_TEST"
@@ -93,33 +95,8 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-FINAL_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
-
-OUTPUT_DIRS = (
-    CROP_DIR,
-    PALETTE_7_DIR,
-    BINARY_TOP1_DIR,
-    BINARY_TOP2_DIR,
-    TRAVELER_DIR,
-    PRINCIPAL_DIR,
-    PRINCIPAL_SELECTOR_DIR,
-    HORIZONTAL_RESCUE_DIR,
-    BINARY_TOP2_GUARDED_DIR,
-    SECONDARY_ROI_DIR,
-    SECONDARY_CANDIDATES_DIR,
-    SECONDARY_DIR,
-    GAP_RESCUE_DIR,
-    MERGED_BEFORE_SECONDARY_RESCUE_DIR,
-    SECONDARY_RESCUE_DIR,
-    MERGED_FINAL_DIR,
-    SMALL_COMPONENT_CLEAN_DIR,
-    SOURCE_ORIGIN_DEBUG_DIR,
-    FINAL_MASK_CROP_DIR,
-    FINAL_CONTOUR_CROP_DIR,
-    FINAL_MASK_ORIGINAL_DIR,
-    FINAL_CONTOUR_ORIGINAL_DIR,
-    FINAL_BINARY_ORIGINAL_DIR,
-)
+TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "21_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
+REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
 
 from postprocessing import (
     draw_artifact_source_overlay,
@@ -566,6 +543,18 @@ def process_image(index: int, current: int, total: int) -> None:
         crop_box,
     )
 
+    top2_guided_result = build_top2_guided_pleura(
+        crop_bgr=crop,
+        binary_top1=binary_top1,
+        binary_top2=binary_top2,
+        current_pleura_mask=merged_final_mask,
+    )
+    top2_final_contour_result = build_top2_final_contour(
+        crop_bgr=crop,
+        current_pleura_mask=merged_final_mask,
+        top2_guided_mask=top2_guided_result["top2_guided_mask"],
+        top2_added_mask=top2_guided_result["top2_added_to_current"],
+    )
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
     save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)
     save_image(BINARY_TOP1_DIR / make_output_name(index, "binary_top1"), binary_top1)
@@ -656,18 +645,19 @@ def process_image(index: int, current: int, total: int) -> None:
         final_binary_original,
     )
 
+    top2_contour_only = top2_final_contour_result["contour_on_crop"]
+    save_image(
+        TOP2_CONTOUR_ONLY_DIR
+        / make_output_name(index, "top2_final_contour_only_on_crop"),
+        top2_contour_only,
+    )
+
 
 def reset_dir(path):
     if path.exists():
         shutil.rmtree(path)
-
     ensure_dir(path)
     return path
-
-
-def ensure_output_dirs() -> None:
-    for directory in OUTPUT_DIRS:
-        ensure_dir(directory)
 
 
 def make_final_contours_contact_sheet(exclude_indices=None):
@@ -753,13 +743,36 @@ def make_final_contours_contact_sheet(exclude_indices=None):
 
         sheet[y0 : y0 + tile.shape[0], x0 : x0 + tile.shape[1]] = tile
 
-    save_image(FINAL_CONTACT_SHEET_PATH, sheet)
+    save_image(REST_CONTACT_SHEET_PATH, sheet)
 
 
 def main() -> None:
     reset_dir(config.RESULTS_DIR)
 
-    ensure_output_dirs()
+    ensure_dir(CROP_DIR)
+    ensure_dir(PALETTE_7_DIR)
+    ensure_dir(BINARY_TOP1_DIR)
+    ensure_dir(BINARY_TOP2_DIR)
+    ensure_dir(TRAVELER_DIR)
+    ensure_dir(PRINCIPAL_DIR)
+    ensure_dir(PRINCIPAL_SELECTOR_DIR)
+    ensure_dir(HORIZONTAL_RESCUE_DIR)
+    ensure_dir(BINARY_TOP2_GUARDED_DIR)
+    ensure_dir(SECONDARY_ROI_DIR)
+    ensure_dir(SECONDARY_CANDIDATES_DIR)
+    ensure_dir(SECONDARY_DIR)
+    ensure_dir(GAP_RESCUE_DIR)
+    ensure_dir(MERGED_BEFORE_SECONDARY_RESCUE_DIR)
+    ensure_dir(SECONDARY_RESCUE_DIR)
+    ensure_dir(MERGED_FINAL_DIR)
+    ensure_dir(SMALL_COMPONENT_CLEAN_DIR)
+    ensure_dir(SOURCE_ORIGIN_DEBUG_DIR)
+    ensure_dir(FINAL_MASK_CROP_DIR)
+    ensure_dir(FINAL_CONTOUR_CROP_DIR)
+    ensure_dir(FINAL_MASK_ORIGINAL_DIR)
+    ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
+    ensure_dir(FINAL_BINARY_ORIGINAL_DIR)
+    ensure_dir(TOP2_CONTOUR_ONLY_DIR)
 
     indices = get_indices_to_process()
 
