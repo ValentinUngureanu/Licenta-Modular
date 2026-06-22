@@ -67,8 +67,9 @@ from secondary_rescue import (
 from top2_final_contour import build_top2_final_contour
 from top2_pleura import build_top2_guided_pleura
 from traveler import build_traveler, draw_extended_component
+from unification import build_top2_unification_debug
 
-FINAL_TEST_DIR = config.RESULTS_DIR / "FINAL_CONTOUR"
+FINAL_TEST_DIR = config.RESULTS_DIR / "06_FINAL_CONTOUR_TEST"
 
 CROP_DIR = FINAL_TEST_DIR / "00_CROP"
 PALETTE_7_DIR = FINAL_TEST_DIR / "01_PALETTE_7"
@@ -95,7 +96,11 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "20_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
+TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "21_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
+TOP2_UNIFICATION_DEBUG_DIR = FINAL_TEST_DIR / "25_TOP2_POLYLINE_UNIFICATION_DEBUG"
+TOP2_UNIFIED_CONTOUR_ONLY_DIR = (
+    FINAL_TEST_DIR / "26_TOP2_POLYLINE_UNIFIED_CONTOUR_ON_CROP"
+)
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
 
 from postprocessing import (
@@ -553,6 +558,11 @@ def process_image(index: int, current: int, total: int) -> None:
         current_pleura_mask=merged_final_mask,
         top2_guided_mask=top2_guided_result["top2_guided_mask"],
     )
+
+    top2_unification_result = build_top2_unification_debug(
+        crop_bgr=crop,
+        top2_final_mask=top2_final_contour_result["final_top2_mask"],
+    )
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
     save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)
     save_image(BINARY_TOP1_DIR / make_output_name(index, "binary_top1"), binary_top1)
@@ -648,6 +658,30 @@ def process_image(index: int, current: int, total: int) -> None:
         TOP2_CONTOUR_ONLY_DIR
         / make_output_name(index, "top2_final_contour_only_on_crop"),
         top2_contour_only,
+    )
+
+    for image_name, debug_image in top2_unification_result["images"].items():
+        save_image(
+            TOP2_UNIFICATION_DEBUG_DIR
+            / make_output_name(index, f"polyline_unification_{image_name}"),
+            debug_image,
+        )
+
+    top2_unified_contour = top2_unification_result["images"][
+        "06_unified_contour_on_crop"
+    ]
+    save_image(
+        TOP2_UNIFIED_CONTOUR_ONLY_DIR
+        / make_output_name(index, "top2_polyline_unified_contour_on_crop"),
+        top2_unified_contour,
+    )
+
+    report_path = (
+        TOP2_UNIFICATION_DEBUG_DIR / f"{index}_polyline_unification_report.txt"
+    )
+    report_path.write_text(
+        str(top2_unification_result["report_text"]),
+        encoding="utf-8",
     )
 
 
@@ -771,6 +805,8 @@ def main() -> None:
     ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
     ensure_dir(FINAL_BINARY_ORIGINAL_DIR)
     ensure_dir(TOP2_CONTOUR_ONLY_DIR)
+    ensure_dir(TOP2_UNIFICATION_DEBUG_DIR)
+    ensure_dir(TOP2_UNIFIED_CONTOUR_ONLY_DIR)
 
     indices = get_indices_to_process()
 

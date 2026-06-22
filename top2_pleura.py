@@ -1,11 +1,12 @@
-from typing import Dict, Tuple
+from typing import Dict
 
 import cv2
 import numpy as np
 
+from final_contour import remove_very_small_components
+
 SEARCH_BAND_DILATE_X_PX = 18
 SEARCH_BAND_DILATE_Y_PX = 7
-MIN_TOP2_CANDIDATE_COMPONENT_AREA_PX = 3
 
 
 def _as_binary_mask(mask: np.ndarray) -> np.ndarray:
@@ -71,28 +72,6 @@ def _build_search_band(anchor_mask: np.ndarray) -> np.ndarray:
     return search_band
 
 
-def _remove_small_components(mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    binary = _as_binary_mask(mask)
-    kept = np.zeros_like(binary, dtype=np.uint8)
-    removed = np.zeros_like(binary, dtype=np.uint8)
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        binary,
-        connectivity=8,
-    )
-
-    for label in range(1, num_labels):
-        area = int(stats[label, cv2.CC_STAT_AREA])
-        component = labels == label
-
-        if area >= MIN_TOP2_CANDIDATE_COMPONENT_AREA_PX:
-            kept[component] = 255
-        else:
-            removed[component] = 255
-
-    return kept, removed
-
-
 def build_top2_guided_pleura(
     binary_top1: np.ndarray,
     binary_top2: np.ndarray,
@@ -105,15 +84,19 @@ def build_top2_guided_pleura(
     search_band = _build_search_band(current)
     top2_in_search_band = _intersect_masks(top2, search_band)
     anchor_mask = _merge_masks(current, top1)
-    top2_extension_candidate = _subtract_masks(top2_in_search_band, anchor_mask)
-    top2_extension_kept, top2_extension_removed = _remove_small_components(
-        top2_extension_candidate,
+
+    top2_added_candidate = _subtract_masks(top2_in_search_band, anchor_mask)
+    top2_added_clean, top2_added_removed = remove_very_small_components(
+        top2_added_candidate
     )
-    top2_guided_mask = _merge_masks(current, top2_extension_kept)
+
+    top2_guided_mask = _merge_masks(current, top2_added_clean)
     top2_added_to_current = _subtract_masks(top2_guided_mask, current)
 
     return {
         "top2_guided_mask": top2_guided_mask,
         "top2_added_to_current": top2_added_to_current,
-        "top2_extension_removed": top2_extension_removed,
+        "top2_added_candidate": top2_added_candidate,
+        "top2_added_removed": top2_added_removed,
+        "search_band": search_band,
     }

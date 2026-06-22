@@ -3,7 +3,6 @@ from typing import Dict, Tuple
 import cv2
 import numpy as np
 
-MIN_FINAL_COMPONENT_AREA_PX = 3
 FINAL_CONTOUR_THICKNESS_PX = 1
 COLOR_FINAL_CONTOUR = (0, 255, 0)
 
@@ -35,28 +34,6 @@ def _subtract_masks(mask_a: np.ndarray, mask_b: np.ndarray) -> np.ndarray:
     result = np.zeros_like(a, dtype=np.uint8)
     result[(a > 0) & (b == 0)] = 255
     return result
-
-
-def _clean_tiny_components(mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    binary = _as_binary_mask(mask)
-    kept = np.zeros_like(binary, dtype=np.uint8)
-    removed = np.zeros_like(binary, dtype=np.uint8)
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        binary,
-        connectivity=8,
-    )
-
-    for label in range(1, num_labels):
-        area = int(stats[label, cv2.CC_STAT_AREA])
-        component = labels == label
-
-        if area >= MIN_FINAL_COMPONENT_AREA_PX:
-            kept[component] = 255
-        else:
-            removed[component] = 255
-
-    return kept, removed
 
 
 def _fill_internal_holes(mask: np.ndarray) -> np.ndarray:
@@ -113,9 +90,7 @@ def build_top2_final_contour(
 ) -> Dict[str, np.ndarray]:
     current = _as_binary_mask(current_pleura_mask)
     guided = _as_binary_mask(top2_guided_mask)
-
-    cleaned_mask, removed_tiny_mask = _clean_tiny_components(guided)
-    final_mask = _fill_internal_holes(cleaned_mask)
+    final_mask = _fill_internal_holes(guided)
 
     if top2_added_mask is None:
         added_to_current_mask = _subtract_masks(final_mask, current)
@@ -128,5 +103,4 @@ def build_top2_final_contour(
         "final_top2_mask": final_mask,
         "contour_on_crop": contour_on_crop,
         "added_to_current_mask": added_to_current_mask,
-        "removed_tiny_mask": removed_tiny_mask,
     }
