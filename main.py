@@ -1,4 +1,3 @@
-# MAIN RESTART 5 - upper envelope pentru zone fragmentate
 import re
 import shutil
 
@@ -68,9 +67,7 @@ from secondary_rescue import (
 from top2_final_contour import build_top2_final_contour
 from top2_pleura import build_top2_guided_pleura
 from traveler import build_traveler, draw_extended_component
-from unification import (
-    build_top2_unification_debug,
-)
+from unification import build_top2_unification_debug
 
 FINAL_TEST_DIR = config.RESULTS_DIR / "06_FINAL_CONTOUR_TEST"
 
@@ -99,17 +96,10 @@ FINAL_CONTOUR_CROP_DIR = FINAL_TEST_DIR / "16_FINAL_CONTOUR_ON_CROP"
 FINAL_MASK_ORIGINAL_DIR = FINAL_TEST_DIR / "17_FINAL_MASK_ON_ORIGINAL"
 FINAL_CONTOUR_ORIGINAL_DIR = FINAL_TEST_DIR / "18_FINAL_CONTOUR_ON_ORIGINAL"
 FINAL_BINARY_ORIGINAL_DIR = FINAL_TEST_DIR / "19_FINAL_BINARY_MASK_ORIGINAL"
-TOP2_RAW_MASK_DEBUG_DIR = FINAL_TEST_DIR / "20B_TOP2_FINAL_RAW_MASK"
 TOP2_CONTOUR_ONLY_DIR = FINAL_TEST_DIR / "21_TOP2_FINAL_CONTOUR_ONLY_ON_CROP"
-UNIFICATION_RESTART5_DEBUG_DIR = (
-    FINAL_TEST_DIR
-    / "25_UNIFICATION_RESTART5_UPPER_ENVELOPE_FRAGMENTED_BRIDGE_DEBUG"
-)
-UNIFICATION_RESTART5_CONTOUR_DIR = (
-    FINAL_TEST_DIR / "26_UNIFICATION_RESTART5_CONTOUR_ON_CROP"
-)
-TOP2_REMOVED_TINY_DEBUG_DIR = (
-    FINAL_TEST_DIR / "20C_TOP2_REMOVED_TINY_COMPONENTS"
+TOP2_UNIFICATION_DEBUG_DIR = FINAL_TEST_DIR / "25_TOP2_POLYLINE_UNIFICATION_DEBUG"
+TOP2_UNIFIED_CONTOUR_ONLY_DIR = (
+    FINAL_TEST_DIR / "26_TOP2_POLYLINE_UNIFIED_CONTOUR_ON_CROP"
 )
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
 
@@ -569,45 +559,10 @@ def process_image(index: int, current: int, total: int) -> None:
         top2_guided_mask=top2_guided_result["top2_guided_mask"],
     )
 
-    raw_top2 = top2_final_contour_result["final_top2_mask"]
-    raw_top2_bin = ((raw_top2 > 0).astype("uint8")) * 255
-    save_image(
-        TOP2_RAW_MASK_DEBUG_DIR / make_output_name(index, "top2_final_mask_after_filter"),
-        raw_top2_bin,
-    )
-
-    removed_tiny_mask = top2_final_contour_result.get("removed_tiny_mask")
-    if removed_tiny_mask is not None:
-        removed_tiny_bin = ((removed_tiny_mask > 0).astype("uint8")) * 255
-        save_image(
-            TOP2_REMOVED_TINY_DEBUG_DIR
-            / make_output_name(index, "top2_removed_tiny_mask"),
-            removed_tiny_bin,
-        )
-
-    removed_tiny_on_crop = top2_final_contour_result.get("removed_tiny_on_crop")
-    if removed_tiny_on_crop is not None:
-        save_image(
-            TOP2_REMOVED_TINY_DEBUG_DIR
-            / make_output_name(index, "top2_removed_tiny_on_crop"),
-            removed_tiny_on_crop,
-        )
-
-    kept_removed_overlay_on_crop = top2_final_contour_result.get(
-        "kept_removed_overlay_on_crop"
-    )
-    if kept_removed_overlay_on_crop is not None:
-        save_image(
-            TOP2_REMOVED_TINY_DEBUG_DIR
-            / make_output_name(index, "top2_kept_green_removed_red_overlay"),
-            kept_removed_overlay_on_crop,
-        )
-
     top2_unification_result = build_top2_unification_debug(
         crop_bgr=crop,
         top2_final_mask=top2_final_contour_result["final_top2_mask"],
     )
-
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
     save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)
     save_image(BINARY_TOP1_DIR / make_output_name(index, "binary_top1"), binary_top1)
@@ -707,8 +662,8 @@ def process_image(index: int, current: int, total: int) -> None:
 
     for image_name, debug_image in top2_unification_result["images"].items():
         save_image(
-            UNIFICATION_RESTART5_DEBUG_DIR
-            / make_output_name(index, f"unification_restart5_{image_name}"),
+            TOP2_UNIFICATION_DEBUG_DIR
+            / make_output_name(index, f"polyline_unification_{image_name}"),
             debug_image,
         )
 
@@ -716,13 +671,13 @@ def process_image(index: int, current: int, total: int) -> None:
         "06_unified_contour_on_crop"
     ]
     save_image(
-        UNIFICATION_RESTART5_CONTOUR_DIR
-        / make_output_name(index, "unification_restart5_contour_on_crop"),
+        TOP2_UNIFIED_CONTOUR_ONLY_DIR
+        / make_output_name(index, "top2_polyline_unified_contour_on_crop"),
         top2_unified_contour,
     )
 
     report_path = (
-        UNIFICATION_RESTART5_DEBUG_DIR / f"{index}_unification_restart5_report.txt"
+        TOP2_UNIFICATION_DEBUG_DIR / f"{index}_polyline_unification_report.txt"
     )
     report_path.write_text(
         str(top2_unification_result["report_text"]),
@@ -849,11 +804,9 @@ def main() -> None:
     ensure_dir(FINAL_MASK_ORIGINAL_DIR)
     ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
     ensure_dir(FINAL_BINARY_ORIGINAL_DIR)
-    ensure_dir(TOP2_RAW_MASK_DEBUG_DIR)
-    ensure_dir(TOP2_REMOVED_TINY_DEBUG_DIR)
     ensure_dir(TOP2_CONTOUR_ONLY_DIR)
-    ensure_dir(UNIFICATION_RESTART5_DEBUG_DIR)
-    ensure_dir(UNIFICATION_RESTART5_CONTOUR_DIR)
+    ensure_dir(TOP2_UNIFICATION_DEBUG_DIR)
+    ensure_dir(TOP2_UNIFIED_CONTOUR_ONLY_DIR)
 
     indices = get_indices_to_process()
 
