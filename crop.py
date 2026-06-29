@@ -190,12 +190,13 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
         if len(approx) in [2, 4]:
             cv2.drawContours(large_mask, [approx], 0, 255, -1)
 
-    white_pixels = np.array(np.where(large_mask == 255))
+    left_roi = large_mask[:, :left_margin_limit]
+    left_pixels = cv2.findNonZero(left_roi)
 
-    if white_pixels.shape[1] == 0:
+    if left_pixels is None:
         left_bound = default_left_bound
     else:
-        left_candidates = white_pixels[1, white_pixels[1] < left_margin_limit]
+        left_candidates = left_pixels[:, 0, 0]
 
         if len(left_candidates) == 0:
             left_bound = default_left_bound
@@ -230,8 +231,7 @@ def estimate_crop_box_from_bar(gray) -> CropBox:
         return CropBox(0, 0, height, width, False)
 
     bar_position = int(np.argmax(columns))
-    bar = horizontal_lines[:, bar_position] // 255
-    bar_pixels = np.where(bar == 1)[0]
+    bar_pixels = np.flatnonzero(horizontal_lines[:, bar_position] > 0)
 
     if len(bar_pixels) == 0:
         return CropBox(0, 0, height, width, False)
@@ -256,7 +256,7 @@ def estimate_crop_box_from_activity(gray) -> CropBox:
     height, width = gray.shape[:2]
     gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    non_black = (gray_blur > 12) & (gray_blur < 245)
+    non_black = cv2.inRange(gray_blur, 13, 244)
 
     row_density = np.count_nonzero(non_black, axis=1) / max(width, 1)
     col_density = np.count_nonzero(non_black, axis=0) / max(height, 1)
@@ -364,7 +364,7 @@ def estimate_left_right_from_vertical_crop(gray_vertical) -> CropBox:
 
     blur = cv2.GaussianBlur(roi, (5, 5), 0)
 
-    non_black = (blur > 10) & (blur < 250)
+    non_black = cv2.inRange(blur, 11, 249)
     non_black_density = np.count_nonzero(non_black, axis=0) / max(roi.shape[0], 1)
 
     edges = cv2.Canny(blur, 30, 90)

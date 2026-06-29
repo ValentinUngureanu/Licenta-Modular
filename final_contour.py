@@ -138,14 +138,18 @@ def draw_mask_overlay(base_image, mask, color, alpha=0.55):
     if np.count_nonzero(mask_bool) == 0:
         return result
 
+    # Varianta optimizata de memorie:
+    # nu mai convertim toata imaginea originala in float32.
+    # Amestecam doar pixelii aflati in masca, ca sa evitam erorile
+    # de tip ArrayMemoryError pe imagini mari.
+    alpha = float(alpha)
     color_array = np.array(color, dtype=np.float32)
-    result_float = result.astype(np.float32)
 
-    result_float[mask_bool] = (1.0 - alpha) * result_float[
-        mask_bool
-    ] + alpha * color_array
+    selected_pixels = result[mask_bool].astype(np.float32)
+    selected_pixels = (1.0 - alpha) * selected_pixels + alpha * color_array
+    result[mask_bool] = np.clip(selected_pixels, 0, 255).astype(np.uint8)
 
-    return np.clip(result_float, 0, 255).astype(np.uint8)
+    return result
 
 
 def draw_contours_around_mask(base_image, mask):
