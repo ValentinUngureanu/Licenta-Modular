@@ -42,6 +42,42 @@ FINAL_MASK_MAX_THICKNESS_PX = 8
 FINAL_MASK_DEFAULT_THICKNESS_PX = 4
 FINAL_MASK_DILATE_ITERATIONS = 1
 
+# Reglaj doar pentru bridge-ul construit din middle polyline.
+# Componentele originale NU sunt ingrosate.
+MIDDLE_BRIDGE_EXTRA_THICKNESS_PX = 3
+MIDDLE_BRIDGE_MAX_THICKNESS_PX = 12
+
+# Eliminare sugrumari bridge, fara terminatii rotunjite:
+# bridge-ul intra putin peste componente, dar capetele sunt plate.
+MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX = 18
+MIDDLE_BRIDGE_CLOSE_KERNEL_PX = 3
+MIDDLE_BRIDGE_CLOSE_ITERATIONS = 1
+
+# Naturalete bridge:
+# bridge-ul nu mai este un dreptunghi drept intre componente,
+# ci o banda pe o curba Bezier care urmareste directia pleurei.
+MIDDLE_BRIDGE_BEZIER_POINTS = 36
+MIDDLE_BRIDGE_TANGENT_SCALE = 0.42
+MIDDLE_BRIDGE_TANGENT_MIN_PX = 12
+MIDDLE_BRIDGE_TANGENT_MAX_PX = 55
+MIDDLE_BRIDGE_EDGE_SMOOTH_KERNEL_PX = 1
+
+# Crestare naturala pe marginea bridge-ului.
+# Afecteaza DOAR bridge-ul, nu componentele originale.
+MIDDLE_BRIDGE_EDGE_JAGGEDNESS_PX = 2
+MIDDLE_BRIDGE_EDGE_JAGGED_PERIOD_PX = 9
+MIDDLE_BRIDGE_EDGE_JAGGED_PHASE_SHIFT = 1.7
+
+# Variatie pseudo-random pentru crestarea bridge-ului.
+# Este determinista: aceeasi imagine produce acelasi rezultat,
+# dar fiecare bridge primeste amplitudine/perioada/faza diferita.
+MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MIN_PX = 1
+MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MAX_PX = 2
+MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_HARD_CAP_PX = 2
+MIDDLE_BRIDGE_RANDOM_PERIOD_MIN_PX = 6
+MIDDLE_BRIDGE_RANDOM_PERIOD_MAX_PX = 15
+MIDDLE_BRIDGE_RANDOM_HARMONICS = 4
+
 SUPPORT_BAND_EXTRA_PX = 6
 SUPPORT_CLOSE_KERNEL_PX = 3
 
@@ -2455,6 +2491,1188 @@ def _draw_special_components_before_unification_on_crop(
     return out
 
 
+def _component_to_local_middle_polyline(
+    component: ComponentInfo,
+    component_order: int,
+) -> Optional[LocalPolylineInfo]:
+    """
+    Polyline locala pe MIJLOCUL pleurei.
+
+    Pentru fiecare coloana x:
+        top = cel mai de sus pixel alb din componenta;
+        bottom = cel mai de jos pixel alb din componenta;
+        middle = (top + bottom) / 2.
+
+    Rezultatul este axa mediana a pleurei.
+    """
+
+    xs_all: List[int] = []
+    ys_all: List[int] = []
+
+    for x in range(component.x_min, component.x_max + 1):
+        ys = np.where(component.mask[:, x] > 0)[0]
+
+        if len(ys) == 0:
+            continue
+
+        y_top = int(ys.min())
+        y_bottom = int(ys.max())
+        y_middle = int(round((y_top + y_bottom) / 2.0))
+
+        xs_all.append(int(x))
+        ys_all.append(y_middle)
+
+    if len(xs_all) < 2:
+        return None
+
+    xs = np.array(xs_all, dtype=np.int32)
+    ys = np.array(ys_all, dtype=np.int32)
+
+    ys = _rolling_median(ys, LOCAL_SMOOTH_WINDOW_PX)
+    ys = np.clip(ys, 0, component.mask.shape[0] - 1).astype(np.int32)
+
+    points = np.stack([xs, ys], axis=1).astype(np.int32)
+
+    start_point = (int(points[0, 0]), int(points[0, 1]))
+    end_point = (int(points[-1, 0]), int(points[-1, 1]))
+
+    return LocalPolylineInfo(
+        component_order=component_order,
+        component_label=component.label,
+        point_count=len(points),
+        x_min=int(points[:, 0].min()),
+        x_max=int(points[:, 0].max()),
+        y_min=int(points[:, 1].min()),
+        y_max=int(points[:, 1].max()),
+        start_point=start_point,
+        end_point=end_point,
+        points=points,
+    )
+
+
+def _build_local_middle_polylines(
+    components: List[ComponentInfo],
+) -> List[LocalPolylineInfo]:
+    middle_polylines: List[LocalPolylineInfo] = []
+
+    for idx, component in enumerate(components, start=1):
+        polyline = _component_to_local_middle_polyline(
+            component=component,
+            component_order=idx,
+        )
+
+        if polyline is not None:
+            middle_polylines.append(polyline)
+
+    middle_polylines.sort(key=lambda p: (p.x_min, p.start_point[1]))
+
+    return middle_polylines
+
+
+def _draw_middle_polyline_on_crop(
+    base_bgr: np.ndarray,
+    middle_segments: List[ConnectedSegmentInfo],
+) -> np.ndarray:
+    """
+    Imagine curata:
+        - crop original;
+        - doar polyline-ul median al pleurei;
+        - fara contur complet, fara text, fara puncte, fara bounding boxes.
+    """
+
+    out = base_bgr.copy()
+
+    for segment in middle_segments:
+        if len(segment.points) < 2:
+            continue
+
+        cv2.polylines(
+            out,
+            [segment.points.reshape((-1, 1, 2))],
+            False,
+            (0, 0, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return out
+
+
+def _draw_contour_from_middle_polyline_on_crop(
+    base_bgr: np.ndarray,
+    middle_segments: List[ConnectedSegmentInfo],
+    final_thickness_px: int,
+) -> np.ndarray:
+    """
+    Creeaza contur complet pe baza polyline-ului median.
+
+    Regula:
+        - middle polyline este axa centrala;
+        - construim o masca subtire/groasa in jurul ei;
+        - grosimea mastii este estimata din grosimea componentelor;
+        - apoi extragem conturul complet al acelei masti.
+
+    Rezultat:
+        - doar conturul exterior complet;
+        - fara text, fara puncte, fara bounding boxes.
+    """
+
+    out = base_bgr.copy()
+
+    h, w = base_bgr.shape[:2]
+    middle_mask = np.zeros((h, w), dtype=np.uint8)
+
+    contour_thickness = int(
+        max(
+            final_thickness_px,
+            FINAL_MASK_DEFAULT_THICKNESS_PX,
+        )
+    )
+
+    contour_thickness = int(
+        min(
+            max(contour_thickness, FINAL_MASK_MIN_THICKNESS_PX),
+            FINAL_MASK_MAX_THICKNESS_PX,
+        )
+    )
+
+    for segment in middle_segments:
+        if len(segment.points) < 2:
+            continue
+
+        cv2.polylines(
+            middle_mask,
+            [segment.points.reshape((-1, 1, 2))],
+            False,
+            255,
+            contour_thickness,
+            cv2.LINE_AA,
+        )
+
+    # O mica dilatare face conturul sa fie inchis si stabil,
+    # dar ramane centrat pe polyline-ul median.
+    if FINAL_MASK_DILATE_ITERATIONS > 0:
+        kernel_size = max(3, contour_thickness)
+
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (kernel_size, kernel_size),
+        )
+
+        middle_mask = cv2.dilate(
+            middle_mask,
+            kernel,
+            iterations=FINAL_MASK_DILATE_ITERATIONS,
+        )
+
+    middle_mask = np.where(middle_mask > 0, 255, 0).astype(np.uint8)
+
+    contours, _hierarchy = cv2.findContours(
+        middle_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    cv2.drawContours(
+        out,
+        contours,
+        -1,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return out
+
+
+def _identify_middle_gaps_connect_all_components(
+    middle_polylines: List[LocalPolylineInfo],
+) -> List[PolylineGapInfo]:
+    """
+    Creeaza gap-uri pentru polyline-ul median si le accepta pe TOATE.
+
+    Folosim asta doar pentru imaginea finala:
+        final_mask = original_final_mask + bridge_median_in_gapuri
+
+    Ideea:
+        - componentele existente raman cu conturul original;
+        - toate componentele consecutive sunt unite prin bridge;
+        - nu mai respingem gap-ul dupa dy/gap_px, pentru ca vrem unificare completa.
+    """
+
+    gaps: List[PolylineGapInfo] = []
+
+    if len(middle_polylines) < 2:
+        return gaps
+
+    for idx, (left, right) in enumerate(
+        zip(middle_polylines[:-1], middle_polylines[1:]),
+        start=1,
+    ):
+        left_endpoint = left.end_point
+        right_endpoint = right.start_point
+
+        gap_px = int(right_endpoint[0] - left_endpoint[0] - 1)
+        dx_px = int(right_endpoint[0] - left_endpoint[0])
+        dy_px = int(abs(right_endpoint[1] - left_endpoint[1]))
+
+        gaps.append(
+            PolylineGapInfo(
+                index=idx,
+                left_component_order=left.component_order,
+                right_component_order=right.component_order,
+                left_component_label=left.component_label,
+                right_component_label=right.component_label,
+                gap_px=gap_px,
+                dx_px=dx_px,
+                dy_px=dy_px,
+                left_endpoint=left_endpoint,
+                right_endpoint=right_endpoint,
+                classification="forced_connect_all_components",
+                accepted=True,
+            )
+        )
+
+    return gaps
+
+
+def _find_exact_middle_polyline_points_for_gap(
+    middle_segments: List[ConnectedSegmentInfo],
+    gap: PolylineGapInfo,
+) -> np.ndarray:
+    """
+    Intoarce punctele din middle polyline strict pentru zona gap-ului.
+
+    Important:
+        - nu reconstruim toata pleura;
+        - nu inlocuim conturul componentelor existente;
+        - middle polyline este folosita doar unde lipseste pleura, adica intre
+          endpoint-urile gap-ului acceptat.
+    """
+
+    x1, y1 = gap.left_endpoint
+    x2, y2 = gap.right_endpoint
+
+    if x2 <= x1:
+        return np.empty((0, 2), dtype=np.int32)
+
+    best_points = np.empty((0, 2), dtype=np.int32)
+
+    for segment in middle_segments:
+        points = segment.points
+
+        if len(points) < 2:
+            continue
+
+        inside = points[(points[:, 0] >= x1) & (points[:, 0] <= x2)]
+
+        if len(inside) > len(best_points):
+            best_points = inside.copy()
+
+    if len(best_points) >= 2:
+        best_points = best_points[np.argsort(best_points[:, 0])]
+
+        if best_points[0, 0] > x1:
+            best_points = np.vstack(
+                [
+                    np.array([[x1, y1]], dtype=np.int32),
+                    best_points,
+                ]
+            )
+
+        if best_points[-1, 0] < x2:
+            best_points = np.vstack(
+                [
+                    best_points,
+                    np.array([[x2, y2]], dtype=np.int32),
+                ]
+            )
+
+        return best_points.astype(np.int32)
+
+    # fallback: doar pentru gap, nu pentru componentele existente
+    xs = np.arange(x1, x2 + 1, dtype=np.int32)
+
+    if len(xs) < 2:
+        return np.empty((0, 2), dtype=np.int32)
+
+    ys = np.interp(xs, [x1, x2], [y1, y2]).astype(np.int32)
+
+    return np.stack([xs, ys], axis=1).astype(np.int32)
+
+
+def _build_middle_bridge_mask_only_in_gaps(
+    shape: Tuple[int, int],
+    middle_segments: List[ConnectedSegmentInfo],
+    middle_gaps: List[PolylineGapInfo],
+    final_thickness_px: int,
+) -> np.ndarray:
+    """
+    Creeaza doar bridge-ul din zonele lipsa.
+
+    Regula finala:
+        final_mask = original_final_mask + bridge_mask
+
+    Asta inseamna:
+        - unde exista pleura, ramane conturul original;
+        - unde lipseste pleura, completam cu o zona construita pe middle polyline;
+        - nu umflam si nu redesenam componentele vechi.
+    """
+
+    h, w = shape[:2]
+    bridge_mask = np.zeros((h, w), dtype=np.uint8)
+
+    bridge_thickness = int(
+        max(
+            final_thickness_px,
+            FINAL_MASK_DEFAULT_THICKNESS_PX,
+        )
+    )
+
+    # Ingrosam DOAR bridge-ul, nu componentele originale.
+    bridge_thickness = int(bridge_thickness + MIDDLE_BRIDGE_EXTRA_THICKNESS_PX)
+
+    bridge_thickness = int(
+        min(
+            max(bridge_thickness, FINAL_MASK_MIN_THICKNESS_PX),
+            MIDDLE_BRIDGE_MAX_THICKNESS_PX,
+        )
+    )
+
+    for gap in middle_gaps:
+        if not gap.accepted:
+            continue
+
+        middle_points = _find_exact_middle_polyline_points_for_gap(
+            middle_segments,
+            gap,
+        )
+
+        if len(middle_points) < 2:
+            continue
+
+        middle_points = middle_points[np.argsort(middle_points[:, 0])]
+        middle_points[:, 0] = np.clip(middle_points[:, 0], 0, w - 1)
+        middle_points[:, 1] = np.clip(middle_points[:, 1], 0, h - 1)
+
+        cv2.polylines(
+            bridge_mask,
+            [middle_points.reshape((-1, 1, 2))],
+            False,
+            255,
+            bridge_thickness,
+            cv2.LINE_AA,
+        )
+
+    bridge_mask = np.where(bridge_mask > 0, 255, 0).astype(np.uint8)
+
+    return bridge_mask
+
+
+def _draw_original_contour_with_middle_bridge_on_crop(
+    base_bgr: np.ndarray,
+    original_final_mask: np.ndarray,
+    middle_segments: List[ConnectedSegmentInfo],
+    middle_gaps: List[PolylineGapInfo],
+    final_thickness_px: int,
+) -> np.ndarray:
+    """
+    Imagine finala ceruta:
+        - foloseste conturul original unde exista pleura;
+        - foloseste middle polyline in toate zonele lipsa dintre componentele consecutive;
+        - extrage conturul complet al mastii:
+              original_final_mask + bridge_middle_polyline
+        - fara text, fara report, fara bounding boxes.
+    """
+
+    out = base_bgr.copy()
+
+    original_mask = _to_binary_mask(original_final_mask)
+
+    bridge_mask = _build_middle_bridge_mask_only_in_gaps(
+        shape=original_mask.shape,
+        middle_segments=middle_segments,
+        middle_gaps=middle_gaps,
+        final_thickness_px=final_thickness_px,
+    )
+
+    final_mask = original_mask.copy()
+    final_mask[bridge_mask > 0] = 255
+
+    contours, _hierarchy = cv2.findContours(
+        final_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    cv2.drawContours(
+        out,
+        contours,
+        -1,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return out
+
+
+def _draw_forced_middle_polyline_only_on_crop(
+    base_bgr: np.ndarray,
+    middle_segments: List[ConnectedSegmentInfo],
+) -> np.ndarray:
+    """
+    Imagine curata:
+        - crop original;
+        - DOAR polyline-ul median;
+        - polyline-ul este fortat conectat intre toate componentele consecutive;
+        - fara contururi, fara masca, fara text, fara puncte, fara bounding boxes.
+    """
+
+    out = base_bgr.copy()
+
+    for segment in middle_segments:
+        if len(segment.points) < 2:
+            continue
+
+        cv2.polylines(
+            out,
+            [segment.points.reshape((-1, 1, 2))],
+            False,
+            (0, 0, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return out
+
+
+def _build_connector_any_direction(
+    p1: Tuple[int, int],
+    p2: Tuple[int, int],
+) -> np.ndarray:
+    """
+    Connector fara conditii:
+        - merge si daca x2 <= x1;
+        - merge si daca gap-ul e mare;
+        - merge si daca saltul vertical e mare;
+        - include ambele capete.
+    """
+
+    x1, y1 = p1
+    x2, y2 = p2
+
+    steps = int(max(abs(x2 - x1), abs(y2 - y1))) + 1
+
+    if steps < 2:
+        return np.array([[x1, y1], [x2, y2]], dtype=np.int32)
+
+    xs = np.rint(np.linspace(x1, x2, steps)).astype(np.int32)
+    ys = np.rint(np.linspace(y1, y2, steps)).astype(np.int32)
+
+    return np.stack([xs, ys], axis=1).astype(np.int32)
+
+
+def _build_forced_middle_chain_segments(
+    middle_polylines: List[LocalPolylineInfo],
+) -> List[ConnectedSegmentInfo]:
+    """
+    Construieste UN SINGUR lant median care uneste toate componentele consecutive.
+
+    Nu exista conditii:
+        - nu verificam gap_px;
+        - nu verificam dy;
+        - nu respingem nimic;
+        - conectam fiecare componenta cu urmatoarea.
+    """
+
+    if len(middle_polylines) == 0:
+        return []
+
+    chunks: List[np.ndarray] = []
+
+    first = middle_polylines[0].points
+
+    if len(first) > 0:
+        chunks.append(first.astype(np.int32))
+
+    for left, right in zip(middle_polylines[:-1], middle_polylines[1:]):
+        connector = _build_connector_any_direction(
+            left.end_point,
+            right.start_point,
+        )
+
+        if len(connector) > 0:
+            chunks.append(connector.astype(np.int32))
+
+        if len(right.points) > 0:
+            chunks.append(right.points.astype(np.int32))
+
+    if len(chunks) == 0:
+        return []
+
+    points = np.vstack(chunks).astype(np.int32)
+
+    if len(points) < 2:
+        return []
+
+    return [
+        ConnectedSegmentInfo(
+            segment_index=1,
+            point_count=len(points),
+            x_min=int(points[:, 0].min()),
+            x_max=int(points[:, 0].max()),
+            y_min=int(points[:, 1].min()),
+            y_max=int(points[:, 1].max()),
+            points=points,
+        )
+    ]
+
+
+def _sample_polyline_point_near_x(
+    points: np.ndarray,
+    target_x: int,
+) -> Tuple[int, int]:
+    """
+    Ia un punct de pe polyline cat mai aproape de target_x.
+    Folosit ca bridge-ul sa intre putin peste componenta,
+    nu sa atinga componenta doar intr-un punct subtire.
+    """
+
+    if points is None or len(points) == 0:
+        return (int(target_x), 0)
+
+    xs = points[:, 0].astype(np.int32)
+    idx = int(np.argmin(np.abs(xs - int(target_x))))
+
+    return (int(points[idx, 0]), int(points[idx, 1]))
+
+
+def _polyline_local_tangent(
+    points: np.ndarray,
+    near_start: bool,
+    sample_px: int = 18,
+) -> np.ndarray:
+    """
+    Estimeaza directia locala a unei componente.
+
+    Pentru capatul din stanga folosim directia primelor puncte.
+    Pentru capatul din dreapta folosim directia ultimelor puncte.
+    """
+
+    if points is None or len(points) < 2:
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+    pts = points[np.argsort(points[:, 0])].astype(np.float32)
+
+    if near_start:
+        p0 = pts[0]
+        target_x = p0[0] + sample_px
+        idx = int(np.argmin(np.abs(pts[:, 0] - target_x)))
+        p1 = pts[max(1, idx)]
+        vec = p1 - p0
+    else:
+        p0 = pts[-1]
+        target_x = p0[0] - sample_px
+        idx = int(np.argmin(np.abs(pts[:, 0] - target_x)))
+        p1 = pts[min(len(pts) - 2, idx)]
+        vec = p0 - p1
+
+    norm = float(np.hypot(vec[0], vec[1]))
+
+    if norm < 1e-6:
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+    return (vec / norm).astype(np.float32)
+
+
+def _sample_cubic_bezier(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    count: int,
+) -> np.ndarray:
+    """
+    Eșantioneaza o curba Bezier cubica.
+    """
+
+    t = np.linspace(0.0, 1.0, int(max(4, count)), dtype=np.float32)
+    one_minus_t = 1.0 - t
+
+    curve = (
+        (one_minus_t**3)[:, None] * p0[None, :]
+        + (3.0 * one_minus_t**2 * t)[:, None] * p1[None, :]
+        + (3.0 * one_minus_t * t**2)[:, None] * p2[None, :]
+        + (t**3)[:, None] * p3[None, :]
+    )
+
+    return curve.astype(np.float32)
+
+
+def _stable_bridge_seed(
+    bridge_index: int,
+    p0: np.ndarray,
+    p3: np.ndarray,
+    distance: float,
+) -> int:
+    """
+    Seed determinist pentru bridge.
+
+    Nu folosim random global, ca rezultatul sa fie reproductibil.
+    Seed-ul depinde de:
+        - ordinea bridge-ului;
+        - pozitia capetelor;
+        - lungimea bridge-ului.
+    """
+
+    values = [
+        int(bridge_index + 1) * 73856093,
+        int(round(float(p0[0]))) * 19349663,
+        int(round(float(p0[1]))) * 83492791,
+        int(round(float(p3[0]))) * 2654435761,
+        int(round(float(p3[1]))) * 97531,
+        int(round(float(distance))) * 433494437,
+    ]
+
+    seed = 0
+
+    for value in values:
+        seed ^= int(value) & 0xFFFFFFFF
+
+    return int(seed & 0xFFFFFFFF)
+
+
+def _random_jagged_profile(
+    cumulative: np.ndarray,
+    rng: np.random.Generator,
+    base_roughness: float,
+    base_period: float,
+    side_shift: float,
+) -> np.ndarray:
+    """
+    Genereaza o crestare neregulata, nu perfect periodica.
+
+    Combina mai multe unde cu amplitudini/faze diferite.
+    """
+
+    if len(cumulative) == 0:
+        return np.zeros(0, dtype=np.float32)
+
+    profile = np.zeros(len(cumulative), dtype=np.float32)
+
+    harmonic_count = int(max(1, MIDDLE_BRIDGE_RANDOM_HARMONICS))
+
+    for harmonic_idx in range(harmonic_count):
+        period_factor = float(rng.uniform(0.65, 1.75))
+        phase = float(rng.uniform(0.0, 2.0 * np.pi)) + float(side_shift)
+        weight = float(rng.uniform(0.25, 1.0)) / float(harmonic_idx + 1)
+
+        local_period = max(3.0, base_period * period_factor)
+
+        profile += (
+            weight * np.sin(2.0 * np.pi * cumulative / local_period + phase)
+        ).astype(np.float32)
+
+    max_abs = float(np.max(np.abs(profile))) if len(profile) > 0 else 0.0
+
+    if max_abs > 1e-6:
+        profile = profile / max_abs
+
+    profile = profile * float(base_roughness)
+
+    return profile.astype(np.float32)
+
+
+def _ribbon_polygon_from_centerline(
+    centerline: np.ndarray,
+    thickness_px: int,
+    shape: Tuple[int, int],
+    rng: np.random.Generator,
+    bridge_index: int,
+    distance_px: float,
+) -> np.ndarray:
+    """
+    Transforma linia centrala a bridge-ului intr-o banda cu margini crestate variabil.
+
+    Diferenta fata de varianta sinusoidala fixa:
+        - fiecare bridge are crestaturi diferite;
+        - amplitudinea depinde de lungime si de grosime;
+        - perioada este aleasa pseudo-random;
+        - rezultatul ramane determinist pentru aceeasi imagine.
+    """
+
+    h, w = shape[:2]
+
+    if centerline is None or len(centerline) < 2:
+        return np.empty((0, 2), dtype=np.int32)
+
+    half = float(max(1.0, thickness_px / 2.0))
+
+    length_factor = float(np.clip(distance_px / 90.0, 0.65, 1.35))
+
+    roughness_min = float(MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MIN_PX)
+    roughness_max = float(MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MAX_PX)
+
+    roughness = float(rng.uniform(roughness_min, roughness_max))
+    roughness *= length_factor
+    roughness = float(np.clip(roughness, roughness_min, roughness_max))
+
+    # Crestarea nu trebuie sa fie prea mare, altfel bridge-ul devine zimtat artificial.
+    # Limitare mai agresiva pentru pozele unde zig-zag-ul era prea vizibil.
+    roughness = float(
+        min(
+            roughness,
+            float(MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_HARD_CAP_PX),
+            max(1.0, half * 0.45),
+        )
+    )
+
+    period_min = float(MIDDLE_BRIDGE_RANDOM_PERIOD_MIN_PX)
+    period_max = float(MIDDLE_BRIDGE_RANDOM_PERIOD_MAX_PX)
+
+    base_period = float(rng.uniform(period_min, period_max))
+    base_period *= float(rng.uniform(0.85, 1.25))
+
+    left_side: List[List[int]] = []
+    right_side: List[List[int]] = []
+
+    cumulative = np.zeros(len(centerline), dtype=np.float32)
+
+    for idx in range(1, len(centerline)):
+        delta = centerline[idx] - centerline[idx - 1]
+        cumulative[idx] = cumulative[idx - 1] + float(np.hypot(delta[0], delta[1]))
+
+    left_profile = _random_jagged_profile(
+        cumulative,
+        rng,
+        roughness,
+        base_period,
+        side_shift=float(rng.uniform(0.0, 2.0 * np.pi)),
+    )
+
+    right_profile = _random_jagged_profile(
+        cumulative,
+        rng,
+        roughness * float(rng.uniform(0.75, 1.15)),
+        base_period * float(rng.uniform(0.75, 1.35)),
+        side_shift=float(rng.uniform(0.0, 2.0 * np.pi)),
+    )
+
+    for idx in range(len(centerline)):
+        if idx == 0:
+            direction = centerline[1] - centerline[0]
+        elif idx == len(centerline) - 1:
+            direction = centerline[-1] - centerline[-2]
+        else:
+            direction = centerline[idx + 1] - centerline[idx - 1]
+
+        norm = float(np.hypot(direction[0], direction[1]))
+
+        if norm < 1e-6:
+            normal = np.array([0.0, 1.0], dtype=np.float32)
+        else:
+            direction = direction / norm
+            normal = np.array([-direction[1], direction[0]], dtype=np.float32)
+
+        # La capete reducem crestarea ca sa se lipeasca mai natural de componenta.
+        edge_fade = min(idx, len(centerline) - 1 - idx)
+        fade = float(np.clip(edge_fade / 5.0, 0.0, 1.0))
+
+        jag_left = float(left_profile[idx]) * fade
+        jag_right = float(right_profile[idx]) * fade
+
+        p = centerline[idx]
+
+        left_half = max(1.0, half + jag_left)
+        right_half = max(1.0, half + jag_right)
+
+        p_left = p + normal * left_half
+        p_right = p - normal * right_half
+
+        left_side.append(
+            [
+                int(round(float(np.clip(p_left[0], 0, w - 1)))),
+                int(round(float(np.clip(p_left[1], 0, h - 1)))),
+            ]
+        )
+
+        right_side.append(
+            [
+                int(round(float(np.clip(p_right[0], 0, w - 1)))),
+                int(round(float(np.clip(p_right[1], 0, h - 1)))),
+            ]
+        )
+
+    polygon = np.array(left_side + right_side[::-1], dtype=np.int32)
+
+    return polygon
+
+
+def _draw_natural_bridge_between_components(
+    bridge_mask: np.ndarray,
+    left: LocalPolylineInfo,
+    right: LocalPolylineInfo,
+    bridge_thickness: int,
+    bridge_index: int,
+) -> None:
+    """
+    Bridge mai natural:
+        - intra putin peste componente;
+        - urmeaza o curba Bezier intre componente;
+        - tangentele sunt luate din directia locala a componentelor;
+        - crestarea marginilor este pseudo-random si diferita pentru fiecare bridge;
+        - capetele raman plate, fara cercuri/bulbi.
+    """
+
+    h, w = bridge_mask.shape[:2]
+
+    left_target_x = int(left.end_point[0] - MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX)
+    right_target_x = int(right.start_point[0] + MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX)
+
+    left_target_x = int(np.clip(left_target_x, left.x_min, left.x_max))
+    right_target_x = int(np.clip(right_target_x, right.x_min, right.x_max))
+
+    p0_tuple = _sample_polyline_point_near_x(
+        left.points,
+        left_target_x,
+    )
+    p3_tuple = _sample_polyline_point_near_x(
+        right.points,
+        right_target_x,
+    )
+
+    p0 = np.array(
+        [
+            float(np.clip(p0_tuple[0], 0, w - 1)),
+            float(np.clip(p0_tuple[1], 0, h - 1)),
+        ],
+        dtype=np.float32,
+    )
+    p3 = np.array(
+        [
+            float(np.clip(p3_tuple[0], 0, w - 1)),
+            float(np.clip(p3_tuple[1], 0, h - 1)),
+        ],
+        dtype=np.float32,
+    )
+
+    distance = float(np.hypot(*(p3 - p0)))
+
+    if distance < 1.0:
+        return
+
+    seed = _stable_bridge_seed(
+        bridge_index,
+        p0,
+        p3,
+        distance,
+    )
+
+    rng = np.random.default_rng(seed)
+
+    tangent_length = int(round(distance * MIDDLE_BRIDGE_TANGENT_SCALE))
+    tangent_length = int(
+        np.clip(
+            tangent_length,
+            MIDDLE_BRIDGE_TANGENT_MIN_PX,
+            MIDDLE_BRIDGE_TANGENT_MAX_PX,
+        )
+    )
+
+    # Mica variatie si pe tangenta, ca bridge-urile sa nu fie toate identice.
+    tangent_length = int(round(float(tangent_length) * float(rng.uniform(0.82, 1.18))))
+
+    left_tangent = _polyline_local_tangent(
+        left.points,
+        near_start=False,
+        sample_px=max(8, MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX),
+    )
+
+    right_tangent = _polyline_local_tangent(
+        right.points,
+        near_start=True,
+        sample_px=max(8, MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX),
+    )
+
+    p1 = p0 + left_tangent * float(tangent_length)
+    p2 = p3 - right_tangent * float(tangent_length)
+
+    # O mica deplasare perpendiculara, diferita pe fiecare bridge,
+    # ca sa nu fie toate curbele prea uniforme.
+    global_direction = p3 - p0
+    global_norm = float(np.hypot(global_direction[0], global_direction[1]))
+
+    if global_norm > 1e-6:
+        global_direction = global_direction / global_norm
+        global_normal = np.array(
+            [-global_direction[1], global_direction[0]],
+            dtype=np.float32,
+        )
+
+        bend_offset = float(
+            rng.uniform(
+                -MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MAX_PX,
+                MIDDLE_BRIDGE_RANDOM_JAGGEDNESS_MAX_PX,
+            )
+        )
+
+        p1 = p1 + global_normal * bend_offset
+        p2 = p2 - global_normal * bend_offset * float(rng.uniform(0.5, 1.0))
+
+    p1[0] = float(np.clip(p1[0], 0, w - 1))
+    p1[1] = float(np.clip(p1[1], 0, h - 1))
+    p2[0] = float(np.clip(p2[0], 0, w - 1))
+    p2[1] = float(np.clip(p2[1], 0, h - 1))
+
+    centerline = _sample_cubic_bezier(
+        p0,
+        p1,
+        p2,
+        p3,
+        MIDDLE_BRIDGE_BEZIER_POINTS,
+    )
+
+    polygon = _ribbon_polygon_from_centerline(
+        centerline,
+        bridge_thickness,
+        bridge_mask.shape,
+        rng,
+        bridge_index,
+        distance,
+    )
+
+    if len(polygon) < 3:
+        return
+
+    cv2.fillPoly(
+        bridge_mask,
+        [polygon.reshape((-1, 1, 2))],
+        255,
+        cv2.LINE_AA,
+    )
+
+
+def _draw_wide_bridge_between_components(
+    bridge_mask: np.ndarray,
+    left: LocalPolylineInfo,
+    right: LocalPolylineInfo,
+    bridge_thickness: int,
+) -> None:
+    """
+    Deseneaza bridge-ul dintre doua componente fara sugrumare si fara terminatii rotunjite.
+
+    Diferenta fata de varianta cu linie groasa si cercuri:
+        - bridge-ul este un poligon cu capete plate;
+        - intra putin peste componente;
+        - nu mai apar bulbii/capetele rotunjite.
+    """
+
+    h, w = bridge_mask.shape[:2]
+
+    left_target_x = int(left.end_point[0] - MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX)
+    right_target_x = int(right.start_point[0] + MIDDLE_BRIDGE_ENDPOINT_OVERLAP_PX)
+
+    left_target_x = int(np.clip(left_target_x, left.x_min, left.x_max))
+    right_target_x = int(np.clip(right_target_x, right.x_min, right.x_max))
+
+    p1 = _sample_polyline_point_near_x(
+        left.points,
+        left_target_x,
+    )
+    p2 = _sample_polyline_point_near_x(
+        right.points,
+        right_target_x,
+    )
+
+    x1 = float(np.clip(p1[0], 0, w - 1))
+    y1 = float(np.clip(p1[1], 0, h - 1))
+    x2 = float(np.clip(p2[0], 0, w - 1))
+    y2 = float(np.clip(p2[1], 0, h - 1))
+
+    dx = x2 - x1
+    dy = y2 - y1
+    length = float(np.hypot(dx, dy))
+
+    if length < 1.0:
+        return
+
+    half_thickness = float(max(1.0, bridge_thickness / 2.0))
+
+    # Vector perpendicular pe directia bridge-ului.
+    nx = -dy / length
+    ny = dx / length
+
+    polygon = np.array(
+        [
+            [
+                int(round(x1 + nx * half_thickness)),
+                int(round(y1 + ny * half_thickness)),
+            ],
+            [
+                int(round(x2 + nx * half_thickness)),
+                int(round(y2 + ny * half_thickness)),
+            ],
+            [
+                int(round(x2 - nx * half_thickness)),
+                int(round(y2 - ny * half_thickness)),
+            ],
+            [
+                int(round(x1 - nx * half_thickness)),
+                int(round(y1 - ny * half_thickness)),
+            ],
+        ],
+        dtype=np.int32,
+    )
+
+    polygon[:, 0] = np.clip(polygon[:, 0], 0, w - 1)
+    polygon[:, 1] = np.clip(polygon[:, 1], 0, h - 1)
+
+    cv2.fillConvexPoly(
+        bridge_mask,
+        polygon.reshape((-1, 1, 2)),
+        255,
+        cv2.LINE_AA,
+    )
+
+
+def _build_middle_bridge_mask_connect_everything(
+    shape: Tuple[int, int],
+    middle_polylines: List[LocalPolylineInfo],
+    final_thickness_px: int,
+) -> np.ndarray:
+    """
+    Bridge fara conditii, mai natural, fara sugrumari si cu margini pseudo-random.
+
+    Regula:
+        - conectam fiecare componenta cu urmatoarea;
+        - nu verificam gap/dy/distanta;
+        - bridge-ul intra putin peste componente;
+        - capetele sunt plate;
+        - close local minim pe bridge ca sa dispara micile gauri.
+    """
+
+    h, w = shape[:2]
+    bridge_mask = np.zeros((h, w), dtype=np.uint8)
+
+    bridge_thickness = int(
+        max(
+            final_thickness_px,
+            FINAL_MASK_DEFAULT_THICKNESS_PX,
+        )
+    )
+
+    bridge_thickness = int(bridge_thickness + MIDDLE_BRIDGE_EXTRA_THICKNESS_PX)
+
+    bridge_thickness = int(
+        min(
+            max(bridge_thickness, FINAL_MASK_MIN_THICKNESS_PX),
+            MIDDLE_BRIDGE_MAX_THICKNESS_PX,
+        )
+    )
+
+    for bridge_index, (left, right) in enumerate(
+        zip(middle_polylines[:-1], middle_polylines[1:]),
+        start=1,
+    ):
+        _draw_natural_bridge_between_components(
+            bridge_mask,
+            left,
+            right,
+            bridge_thickness,
+            bridge_index,
+        )
+
+    if MIDDLE_BRIDGE_CLOSE_KERNEL_PX > 1:
+        close_size = int(MIDDLE_BRIDGE_CLOSE_KERNEL_PX)
+
+        if close_size % 2 == 0:
+            close_size += 1
+
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (close_size, close_size),
+        )
+
+        bridge_mask = cv2.morphologyEx(
+            bridge_mask,
+            cv2.MORPH_CLOSE,
+            close_kernel,
+            iterations=int(MIDDLE_BRIDGE_CLOSE_ITERATIONS),
+        )
+
+    if MIDDLE_BRIDGE_EDGE_SMOOTH_KERNEL_PX > 1:
+        smooth_size = int(MIDDLE_BRIDGE_EDGE_SMOOTH_KERNEL_PX)
+
+        if smooth_size % 2 == 0:
+            smooth_size += 1
+
+        smooth_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (smooth_size, smooth_size),
+        )
+
+        bridge_mask = cv2.morphologyEx(
+            bridge_mask,
+            cv2.MORPH_CLOSE,
+            smooth_kernel,
+            iterations=1,
+        )
+
+    bridge_mask = np.where(bridge_mask > 0, 255, 0).astype(np.uint8)
+
+    return bridge_mask
+
+
+def _draw_contour_with_middle_polyline_on_crop(
+    base_bgr: np.ndarray,
+    original_final_mask: np.ndarray,
+    middle_polylines: List[LocalPolylineInfo],
+    forced_middle_segments: List[ConnectedSegmentInfo],
+    final_thickness_px: int,
+) -> np.ndarray:
+    """
+    Imagine curata:
+        - crop original;
+        - DOAR contur final;
+        - contur final = contur original + bridge intre TOATE componentele;
+        - fara polyline, fara text, fara report, fara bounding boxes.
+    """
+
+    out = base_bgr.copy()
+
+    original_mask = _to_binary_mask(original_final_mask)
+
+    bridge_mask = _build_middle_bridge_mask_connect_everything(
+        shape=original_mask.shape,
+        middle_polylines=middle_polylines,
+        final_thickness_px=final_thickness_px,
+    )
+
+    final_mask = original_mask.copy()
+    final_mask[bridge_mask > 0] = 255
+
+    contours, _hierarchy = cv2.findContours(
+        final_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_NONE,
+    )
+
+    cv2.drawContours(
+        out,
+        contours,
+        -1,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return out
+
+
 def build_top2_unification_debug(
     crop_bgr: np.ndarray,
     top2_final_mask: np.ndarray,
@@ -2481,6 +3699,18 @@ def build_top2_unification_debug(
     connected_segments = _build_connected_segments(polylines, gaps)
     smoothed_segments = _smooth_connected_segments(connected_segments)
     cleaned_segments, dip_cleanups = _clean_redundant_dips(smoothed_segments)
+
+    # Polyline median: contur/axa pe mijlocul pleurei.
+    middle_polylines = _build_local_middle_polylines(components)
+    middle_gaps = _identify_middle_gaps_connect_all_components(middle_polylines)
+    middle_connected_segments = _build_connected_segments(middle_polylines, middle_gaps)
+    middle_smoothed_segments = _smooth_connected_segments(middle_connected_segments)
+    middle_cleaned_segments, middle_dip_cleanups = _clean_redundant_dips(
+        middle_smoothed_segments
+    )
+
+    # Lant median fortat: uneste toate componentele fara nicio conditie.
+    forced_middle_segments = _build_forced_middle_chain_segments(middle_polylines)
 
     bottom_polylines = _build_local_bottom_polylines(components)
     bottom_gaps = _identify_bottom_polyline_gaps(bottom_polylines, gaps)
@@ -2551,6 +3781,33 @@ def build_top2_unification_debug(
 
     return {
         "images": {
+            "special_contour_with_middle_polyline_on_crop": _draw_contour_with_middle_polyline_on_crop(
+                base_bgr,
+                original_final_mask,
+                middle_polylines,
+                forced_middle_segments,
+                final_thickness_px,
+            ),
+            "special_forced_middle_polyline_only_on_crop": _draw_forced_middle_polyline_only_on_crop(
+                base_bgr,
+                middle_cleaned_segments,
+            ),
+            "special_original_contour_middle_bridge_on_crop": _draw_original_contour_with_middle_bridge_on_crop(
+                base_bgr,
+                original_final_mask,
+                middle_cleaned_segments,
+                middle_gaps,
+                final_thickness_px,
+            ),
+            "special_contour_from_middle_polyline_on_crop": _draw_contour_from_middle_polyline_on_crop(
+                base_bgr,
+                middle_cleaned_segments,
+                final_thickness_px,
+            ),
+            "special_middle_polyline_on_crop": _draw_middle_polyline_on_crop(
+                base_bgr,
+                middle_cleaned_segments,
+            ),
             "step9_final_output_on_crop": final_output_on_crop,
             "step9_final_mask_only": final_clean_mask,
             "step9_final_polyline_only": final_polyline_only,
@@ -2585,6 +3842,13 @@ def build_top2_unification_debug(
         "components": components,
         "rejected_components": rejected_components,
         "local_polylines": polylines,
+        "middle_polylines": middle_polylines,
+        "middle_polyline_gaps": middle_gaps,
+        "middle_connected_segments": middle_connected_segments,
+        "middle_smoothed_segments": middle_smoothed_segments,
+        "middle_cleaned_segments": middle_cleaned_segments,
+        "forced_middle_segments": forced_middle_segments,
+        "middle_dip_cleanups": middle_dip_cleanups,
         "bottom_polylines": bottom_polylines,
         "polyline_gaps": gaps,
         "bottom_polyline_gaps": bottom_gaps,

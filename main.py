@@ -59,12 +59,14 @@ from unification import build_top2_unification_debug
 #   - nu facem inca validare pe support_mask.
 #
 # Output:
-#   RESULTS/41_UNIFICATION_POLYLINES_ONLY
-#       <index>_01_polylines_only_on_crop.png
+#   RESULTS/56_UNIFICATION_NATURAL_BRIDGE_RANDOM_JAGGED_LIMITED
+#       <index>_01_natural_bridge_random_jagged_limited.png
 # ============================================================
 
 
-UNIFICATION_SPECIAL_DIR = config.RESULTS_DIR / "41_UNIFICATION_POLYLINES_ONLY"
+UNIFICATION_SPECIAL_DIR = (
+    config.RESULTS_DIR / "56_UNIFICATION_NATURAL_BRIDGE_RANDOM_JAGGED_LIMITED"
+)
 
 
 def reset_dir(path):
@@ -346,7 +348,7 @@ def build_unification_input(index: int):
 
 
 def process_image(index: int, current: int, total: int) -> None:
-    print(f"[{current}/{total}] Imagine {index} - unification special output")
+    print(f"[{current}/{total}] Imagine {index} - natural bridge random jagged limited")
 
     input_result = build_unification_input(index)
 
@@ -360,11 +362,17 @@ def process_image(index: int, current: int, total: int) -> None:
         support_mask=input_result["binary_top2"],
     )
 
-    polylines_on_crop = unification_result["images"]["special_polylines_only_on_crop"]
+    contour_with_polyline = unification_result["images"][
+        "special_contour_with_middle_polyline_on_crop"
+    ]
+
+    save_path = UNIFICATION_SPECIAL_DIR / make_output_name(
+        index, "01_natural_bridge_random_jagged_limited"
+    )
 
     save_image(
-        UNIFICATION_SPECIAL_DIR / make_output_name(index, "01_polylines_only_on_crop"),
-        polylines_on_crop,
+        save_path,
+        contour_with_polyline,
     )
 
 
