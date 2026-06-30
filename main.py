@@ -37,6 +37,7 @@ from image_io import (
     save_image,
 )
 from pleural_interruptions import detect_pleural_interruptions
+from pleural_nodules import detect_pleural_nodules
 from preprocessing import preprocess_crop
 from principal_component import (
     build_principal_component,
@@ -77,8 +78,13 @@ except ImportError:
 FINAL_TEST_DIR = config.RESULTS_DIR / "FINAL_CONTOUR_TEST"
 
 CROP_DIR = FINAL_TEST_DIR / "00_CROP"
+PALETTE_7_DIR = FINAL_TEST_DIR / "00_PALETTE_7"
 BINARY_TOP1_DIR = FINAL_TEST_DIR / "01_BINARY_TOP1"
 BINARY_TOP2_DIR = FINAL_TEST_DIR / "02_BINARY_TOP2_SECONDARY_SEARCH"
+BINARY_TOP3_DIR = FINAL_TEST_DIR / "02A_BINARY_TOP3_NODULE_SUPPORT"
+BINARY_TOP4_DIR = FINAL_TEST_DIR / "02B_BINARY_TOP4_NODULE_SUPPORT"
+BINARY_TOP3_CONTOUR_DIR = FINAL_TEST_DIR / "02C_BINARY_TOP3_CONTOUR_ON_CROP"
+BINARY_TOP4_CONTOUR_DIR = FINAL_TEST_DIR / "02D_BINARY_TOP4_CONTOUR_ON_CROP"
 PRINCIPAL_DIR = FINAL_TEST_DIR / "03_PRINCIPAL_COMPONENT"
 SECONDARY_DIR = FINAL_TEST_DIR / "04_PRINCIPAL_HORIZONTAL_SECONDARY_COMPONENTS"
 MERGED_FINAL_DIR = FINAL_TEST_DIR / "05_MERGED_FINAL_AFTER_ALL_RESCUES"
@@ -93,6 +99,23 @@ TOP2_UNIFIED_CONTOUR_ONLY_DIR = (
 PLEURAL_INTERRUPTION_DIR = FINAL_TEST_DIR / "12_PLEURAL_INTERRUPTION_MARKING"
 PLEURAL_INTERRUPTION_COMPARISON_DIR = (
     PLEURAL_INTERRUPTION_DIR / "00_COMPARATIE_CU_COMPONENTE"
+)
+PLEURAL_NODULE_DIR = FINAL_TEST_DIR / "13_PLEURAL_NODULE_MARKING"
+PLEURAL_NODULE_COMPARISON_DIR = PLEURAL_NODULE_DIR / "00_COMPARATIE_CU_COMPONENTE"
+PLEURAL_NODULE_STEPS_DIR = PLEURAL_NODULE_DIR / "00_PASI_FILTRARE_TOATE_POZELE"
+PLEURAL_NODULE_ORIGINAL_BOX_DIR = PLEURAL_NODULE_DIR / "01_NODULI_CHENAR_PE_ORIGINAL"
+FINAL_FINDINGS_ORIGINAL_DIR = (
+    FINAL_TEST_DIR / "14_VARIANTA_FINALA_PLEURA_INTRERUPERI_NODULI"
+)
+PLEURAL_NODULE_STAGE0_DIR = PLEURAL_NODULE_DIR / "01_STAGE_0_TOT_TOP3_SUB_PLEURA"
+PLEURAL_NODULE_STAGE1_DIR = PLEURAL_NODULE_DIR / "02_STAGE_1_CONTACT_CU_PLEURA"
+PLEURAL_NODULE_STAGE2_DIR = PLEURAL_NODULE_DIR / "03_STAGE_2_COBORARE_SUB_PLEURA"
+PLEURAL_NODULE_STAGE2_DIFF_DIR = (
+    PLEURAL_NODULE_DIR / "04_STAGE_2_DIFERENTA_RESPINSE_DE_DROP"
+)
+PLEURAL_NODULE_STAGE3_DIR = PLEURAL_NODULE_DIR / "05_STAGE_3_DIMENSIUNI_MINIME"
+PLEURAL_NODULE_STAGE3_DIFF_DIR = (
+    PLEURAL_NODULE_DIR / "06_STAGE_3_DIFERENTA_RESPINSE_DE_DIMENSIUNI"
 )
 
 REST_CONTACT_SHEET_PATH = config.RESULTS_DIR / "00_TOATE_POZELE_FINAL_CONTOUR.jpg"
@@ -149,6 +172,89 @@ def build_labeled_panel(image, title, panel_width=360, panel_height=230):
     return canvas
 
 
+def normalize_debug_mask(mask):
+    if mask is None:
+        return None
+
+    if mask.ndim == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+    return (mask > 0).astype(np.uint8) * 255
+
+
+def draw_binary_contour_on_crop(crop_bgr, binary_mask, color=(0, 255, 0), thickness=1):
+    result = to_bgr_debug(crop_bgr)
+    binary = normalize_debug_mask(binary_mask)
+
+    if binary is None or np.count_nonzero(binary > 0) == 0:
+        return result
+
+    contours, _ = cv2.findContours(
+        binary,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    if len(contours) == 0:
+        return result
+
+    cv2.drawContours(
+        result,
+        contours,
+        contourIdx=-1,
+        color=color,
+        thickness=thickness,
+        lineType=cv2.LINE_AA,
+    )
+
+    return result
+
+
+def draw_mask_difference_on_crop(
+    crop_bgr,
+    kept_mask,
+    removed_mask,
+    kept_color=(0, 255, 255),
+    removed_color=(0, 120, 255),
+    title_text="cyan=ramane dupa stage2 | portocaliu=respins de drop",
+):
+    result = to_bgr_debug(crop_bgr)
+
+    kept = normalize_debug_mask(kept_mask)
+    removed = normalize_debug_mask(removed_mask)
+
+    if kept is not None:
+        result = draw_binary_contour_on_crop(result, kept, kept_color, thickness=2)
+
+    if removed is not None:
+        result = draw_binary_contour_on_crop(
+            result, removed, removed_color, thickness=2
+        )
+
+    cv2.putText(
+        result,
+        title_text,
+        (12, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.44,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        result,
+        title_text,
+        (12, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.44,
+        (0, 0, 0),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return result
+
+
 def build_interruption_component_comparison(
     principal_image,
     secondary_image,
@@ -168,6 +274,256 @@ def build_interruption_component_comparison(
     return np.vstack([row_1, row_2])
 
 
+def build_nodule_component_comparison(
+    principal_image,
+    secondary_image,
+    source_origin_image,
+    nodule_image,
+):
+    panels = [
+        build_labeled_panel(principal_image, "1 Principal"),
+        build_labeled_panel(secondary_image, "2 Principal + secundare"),
+        build_labeled_panel(source_origin_image, "3 Surse componente"),
+        build_labeled_panel(nodule_image, "4 Noduli marcati"),
+    ]
+
+    row_1 = np.hstack([panels[0], panels[1]])
+    row_2 = np.hstack([panels[2], panels[3]])
+
+    return np.vstack([row_1, row_2])
+
+
+def draw_nodule_boxes_on_original(
+    original_image,
+    nodule_mask_crop,
+    crop_box,
+    title_text="chenar galben = nodul detectat",
+):
+    result = to_bgr_debug(original_image)
+    nodule_mask_original = project_mask_to_original(
+        nodule_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+    nodule_mask_original = normalize_debug_mask(nodule_mask_original)
+
+    if nodule_mask_original is None or np.count_nonzero(nodule_mask_original > 0) == 0:
+        cv2.putText(
+            result,
+            "Nu exista noduli detectati",
+            (14, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.70,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return result
+
+    contours, _ = cv2.findContours(
+        nodule_mask_original,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    box_index = 1
+    pad = 7
+    height, width = result.shape[:2]
+
+    for contour in contours:
+        if cv2.contourArea(contour) < 1:
+            continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(width - 1, x + w + pad)
+        y2 = min(height - 1, y + h + pad)
+
+        cv2.rectangle(
+            result,
+            (x1, y1),
+            (x2, y2),
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            result,
+            f"N{box_index}",
+            (x1, max(18, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        box_index += 1
+
+    cv2.putText(
+        result,
+        title_text,
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.70,
+        (0, 0, 0),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        result,
+        title_text,
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.70,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    return result
+
+
+def draw_contour_mask_on_image(result, mask, color, thickness=2):
+    binary = normalize_debug_mask(mask)
+
+    if binary is None or np.count_nonzero(binary > 0) == 0:
+        return result
+
+    contours, _ = cv2.findContours(
+        binary,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    if len(contours) == 0:
+        return result
+
+    cv2.drawContours(
+        result,
+        contours,
+        contourIdx=-1,
+        color=color,
+        thickness=thickness,
+        lineType=cv2.LINE_AA,
+    )
+
+    return result
+
+
+def draw_bounding_boxes_on_image(result, mask, color, thickness=2, pad=4):
+    binary = normalize_debug_mask(mask)
+
+    if binary is None or np.count_nonzero(binary > 0) == 0:
+        return result
+
+    contours, _ = cv2.findContours(
+        binary,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    if len(contours) == 0:
+        return result
+
+    image_height, image_width = result.shape[:2]
+
+    for contour in contours:
+        if cv2.contourArea(contour) < 1:
+            continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+
+        x1 = max(0, int(x) - int(pad))
+        y1 = max(0, int(y) - int(pad))
+        x2 = min(image_width - 1, int(x + w - 1) + int(pad))
+        y2 = min(image_height - 1, int(y + h - 1) + int(pad))
+
+        cv2.rectangle(
+            result,
+            (x1, y1),
+            (x2, y2),
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    return result
+
+
+def draw_final_findings_on_original(
+    original_image,
+    crop_box,
+    pleura_mask_crop,
+    interruption_mask_crop,
+    nodule_mask_crop,
+):
+    result = to_bgr_debug(original_image)
+
+    pleura_original = project_mask_to_original(
+        pleura_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+    interruption_original = project_mask_to_original(
+        interruption_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+    nodule_original = project_mask_to_original(
+        nodule_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+
+    # BGR: verde = pleura, galben = intreruperi, rosu = noduli
+    result = draw_contour_mask_on_image(
+        result,
+        pleura_original,
+        color=(0, 255, 0),
+        thickness=1,
+    )
+    result = draw_contour_mask_on_image(
+        result,
+        interruption_original,
+        color=(0, 255, 255),
+        thickness=1,
+    )
+    # Nodulii se marcheaza cu dreptunghi rosu, conform cerintei proiectului.
+    result = draw_bounding_boxes_on_image(
+        result,
+        nodule_original,
+        color=(0, 0, 255),
+        thickness=1,
+        pad=4,
+    )
+
+    cv2.putText(
+        result,
+        "verde=pleura | galben=intreruperi | rosu=noduli",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (0, 0, 0),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        result,
+        "verde=pleura | galben=intreruperi | rosu=noduli",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return result
+
+
 def process_image(index: int, current: int, total: int) -> None:
     print(f"[{current}/{total}] Imagine {index}")
 
@@ -183,6 +539,8 @@ def process_image(index: int, current: int, total: int) -> None:
     palette_7 = preprocessing_result["palette_7"]
     binary_top1 = preprocessing_result["binary_top1"]
     binary_top2 = preprocessing_result["binary_top2"]
+    binary_top3 = preprocessing_result["binary_top3"]
+    binary_top4 = preprocessing_result["binary_top4"]
 
     traveler_result = build_traveler(binary_top1)
     raw_points = traveler_result["raw_points"]
@@ -620,11 +978,44 @@ def process_image(index: int, current: int, total: int) -> None:
         top2_final_mask=top2_final_contour_result["final_top2_mask"],
         support_mask=binary_top2,
     )
+
+    binary_top3_contour_on_crop = draw_binary_contour_on_crop(
+        crop,
+        binary_top3,
+        color=(0, 255, 0),
+        thickness=1,
+    )
+    binary_top4_contour_on_crop = draw_binary_contour_on_crop(
+        crop,
+        binary_top4,
+        color=(0, 255, 0),
+        thickness=1,
+    )
+
     save_image(CROP_DIR / make_output_name(index, "crop"), crop)
+    save_image(PALETTE_7_DIR / make_output_name(index, "palette_7"), palette_7)
     save_image(BINARY_TOP1_DIR / make_output_name(index, "binary_top1"), binary_top1)
     save_image(
         BINARY_TOP2_DIR / make_output_name(index, "binary_top2_secondary_search"),
         binary_top2,
+    )
+    save_image(
+        BINARY_TOP3_DIR / make_output_name(index, "binary_top3_nodule_support"),
+        binary_top3,
+    )
+    save_image(
+        BINARY_TOP4_DIR / make_output_name(index, "binary_top4_nodule_support"),
+        binary_top4,
+    )
+    save_image(
+        BINARY_TOP3_CONTOUR_DIR
+        / make_output_name(index, "binary_top3_contour_on_crop"),
+        binary_top3_contour_on_crop,
+    )
+    save_image(
+        BINARY_TOP4_CONTOUR_DIR
+        / make_output_name(index, "binary_top4_contour_on_crop"),
+        binary_top4_contour_on_crop,
     )
     save_image(
         PRINCIPAL_DIR / make_output_name(index, "principal_component"), principal_debug
@@ -713,6 +1104,236 @@ def process_image(index: int, current: int, total: int) -> None:
         PLEURAL_INTERRUPTION_COMPARISON_DIR
         / make_output_name(index, "comparatie_componente_intreruperi"),
         interruption_comparison,
+    )
+
+    nodule_result = detect_pleural_nodules(
+        base_bgr=crop,
+        pleura_mask=top2_unification_result["unified_mask"],
+        bridge_mask=top2_unification_result["bridge_mask"],
+        interruption_mask=interruption_result["interruption_mask"],
+        binary_top3=binary_top3,
+        binary_top4=None,
+    )
+
+    # Pentru noduli folosim masca de dreptunghi daca detectorul o furnizeaza.
+    # nodule_mask ramane masca reala/core, iar nodule_box_mask este pentru marcaj final.
+    nodule_visual_mask = nodule_result.get(
+        "nodule_box_mask",
+        nodule_result["nodule_mask"],
+    )
+
+    save_image(
+        PLEURAL_NODULE_DIR
+        / make_output_name(index, "pleural_nodules_on_unified_contour"),
+        nodule_result["nodule_image"],
+    )
+
+    save_image(
+        PLEURAL_NODULE_DIR / make_output_name(index, "pleural_nodules_mask"),
+        nodule_result["nodule_mask"],
+    )
+
+    if "nodule_box_mask" in nodule_result:
+        save_image(
+            PLEURAL_NODULE_DIR / make_output_name(index, "pleural_nodules_box_mask"),
+            nodule_result["nodule_box_mask"],
+        )
+
+    nodule_boxes_original_debug = draw_nodule_boxes_on_original(
+        image,
+        nodule_visual_mask,
+        crop_box,
+    )
+
+    save_image(
+        PLEURAL_NODULE_ORIGINAL_BOX_DIR
+        / make_output_name(index, "pleural_nodules_boxes_on_original"),
+        nodule_boxes_original_debug,
+    )
+
+    final_findings_original_debug = draw_final_findings_on_original(
+        original_image=image,
+        crop_box=crop_box,
+        pleura_mask_crop=top2_unification_result["unified_mask"],
+        interruption_mask_crop=interruption_result["interruption_mask"],
+        nodule_mask_crop=nodule_visual_mask,
+    )
+
+    save_image(
+        FINAL_FINDINGS_ORIGINAL_DIR
+        / make_output_name(
+            index, "varianta_finala_pleura_intreruperi_noduli_pe_original"
+        ),
+        final_findings_original_debug,
+    )
+
+    save_image(
+        PLEURAL_NODULE_DIR
+        / make_output_name(index, "pleural_nodules_top3_working_mask"),
+        nodule_result["working_mask"],
+    )
+
+    save_image(
+        PLEURAL_NODULE_DIR
+        / make_output_name(index, "pleural_nodules_candidates_debug"),
+        nodule_result["candidate_debug_image"],
+    )
+
+    stage0_mask = nodule_result.get("stage0_mask")
+    stage1_mask = nodule_result.get("stage1_mask")
+    stage2_mask = nodule_result.get("stage2_mask")
+    stage3_mask = nodule_result.get("stage3_mask")
+    stage4_mask = nodule_result.get("stage4_mask")
+    stage5_mask = nodule_result.get("stage5_mask")
+
+    if stage0_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "00_stage0_tot_top3_sub_pleura"),
+            nodule_result.get(
+                "stage0_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage1_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "01_stage1_contact_cu_pleura"),
+            nodule_result.get(
+                "stage1_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage2_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "02_stage2_coborare_sub_pleura"),
+            nodule_result.get(
+                "stage2_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage1_mask is not None and stage2_mask is not None:
+        stage1_binary = normalize_debug_mask(stage1_mask)
+        stage2_binary = normalize_debug_mask(stage2_mask)
+        removed_by_stage2 = np.zeros_like(stage1_binary, dtype=np.uint8)
+        removed_by_stage2[(stage1_binary > 0) & (stage2_binary == 0)] = 255
+
+        difference_debug = draw_mask_difference_on_crop(
+            crop,
+            kept_mask=stage2_binary,
+            removed_mask=removed_by_stage2,
+            title_text="cyan=ramane dupa stage2 | portocaliu=respins de drop",
+        )
+
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "03_stage2_diferenta_contact_minus_drop"),
+            difference_debug,
+        )
+
+    if stage3_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "04_stage3_dimensiuni_minime"),
+            nodule_result.get(
+                "stage3_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage2_mask is not None and stage3_mask is not None:
+        stage2_binary = normalize_debug_mask(stage2_mask)
+        stage3_binary = normalize_debug_mask(stage3_mask)
+        removed_by_stage3 = np.zeros_like(stage2_binary, dtype=np.uint8)
+        removed_by_stage3[(stage2_binary > 0) & (stage3_binary == 0)] = 255
+
+        stage3_difference_debug = draw_mask_difference_on_crop(
+            crop,
+            kept_mask=stage3_binary,
+            removed_mask=removed_by_stage3,
+            title_text="cyan=ramane dupa stage3 | portocaliu=respins de dimensiuni",
+        )
+
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "05_stage3_diferenta_drop_minus_dimensiuni"),
+            stage3_difference_debug,
+        )
+
+    if stage4_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "06_stage4_elimina_componente_prea_mari"),
+            nodule_result.get(
+                "stage4_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage3_mask is not None and stage4_mask is not None:
+        stage3_binary = normalize_debug_mask(stage3_mask)
+        stage4_binary = normalize_debug_mask(stage4_mask)
+        removed_by_stage4 = np.zeros_like(stage3_binary, dtype=np.uint8)
+        removed_by_stage4[(stage3_binary > 0) & (stage4_binary == 0)] = 255
+
+        stage4_difference_debug = draw_mask_difference_on_crop(
+            crop,
+            kept_mask=stage4_binary,
+            removed_mask=removed_by_stage4,
+            title_text="cyan=ramane dupa stage4 | portocaliu=respins fiind prea mare",
+        )
+
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "07_stage4_diferenta_dimensiuni_minus_prea_mari"),
+            stage4_difference_debug,
+        )
+
+    if stage5_mask is not None:
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(index, "08_stage5_elimina_artefacte_mici"),
+            nodule_result.get(
+                "stage5_debug_image", nodule_result["candidate_debug_image"]
+            ),
+        )
+
+    if stage4_mask is not None and stage5_mask is not None:
+        stage4_binary = normalize_debug_mask(stage4_mask)
+        stage5_binary = normalize_debug_mask(stage5_mask)
+        removed_by_stage5 = np.zeros_like(stage4_binary, dtype=np.uint8)
+        removed_by_stage5[(stage4_binary > 0) & (stage5_binary == 0)] = 255
+
+        stage5_difference_debug = draw_mask_difference_on_crop(
+            crop,
+            kept_mask=stage5_binary,
+            removed_mask=removed_by_stage5,
+            title_text="cyan=ramane dupa stage5 | portocaliu=artefact mic eliminat",
+        )
+
+        save_image(
+            PLEURAL_NODULE_STEPS_DIR
+            / make_output_name(
+                index, "09_stage5_diferenta_stage4_minus_artefacte_mici"
+            ),
+            stage5_difference_debug,
+        )
+
+    save_image(
+        PLEURAL_NODULE_STEPS_DIR / make_output_name(index, "10_final_noduli_marcati"),
+        nodule_result["nodule_image"],
+    )
+
+    nodule_comparison = build_nodule_component_comparison(
+        principal_image=principal_debug,
+        secondary_image=secondary_debug,
+        source_origin_image=source_origin_debug,
+        nodule_image=nodule_result["nodule_image"],
+    )
+
+    save_image(
+        PLEURAL_NODULE_COMPARISON_DIR
+        / make_output_name(index, "comparatie_componente_noduli"),
+        nodule_comparison,
     )
 
 
@@ -813,8 +1434,13 @@ def main() -> None:
     reset_dir(config.RESULTS_DIR)
 
     ensure_dir(CROP_DIR)
+    ensure_dir(PALETTE_7_DIR)
     ensure_dir(BINARY_TOP1_DIR)
     ensure_dir(BINARY_TOP2_DIR)
+    ensure_dir(BINARY_TOP3_DIR)
+    ensure_dir(BINARY_TOP4_DIR)
+    ensure_dir(BINARY_TOP3_CONTOUR_DIR)
+    ensure_dir(BINARY_TOP4_CONTOUR_DIR)
     ensure_dir(PRINCIPAL_DIR)
     ensure_dir(SECONDARY_DIR)
     ensure_dir(MERGED_FINAL_DIR)
@@ -826,6 +1452,11 @@ def main() -> None:
     ensure_dir(TOP2_UNIFIED_CONTOUR_ONLY_DIR)
     ensure_dir(PLEURAL_INTERRUPTION_DIR)
     ensure_dir(PLEURAL_INTERRUPTION_COMPARISON_DIR)
+    ensure_dir(PLEURAL_NODULE_DIR)
+    ensure_dir(PLEURAL_NODULE_COMPARISON_DIR)
+    ensure_dir(PLEURAL_NODULE_STEPS_DIR)
+    ensure_dir(PLEURAL_NODULE_ORIGINAL_BOX_DIR)
+    ensure_dir(FINAL_FINDINGS_ORIGINAL_DIR)
 
     indices = get_indices_to_process()
 

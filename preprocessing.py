@@ -17,6 +17,8 @@ PALETTE_VALID_HIGH_PERCENTILE = 99.7
 
 BINARY_KEEP_TOP1_LEVELS = 1
 BINARY_KEEP_TOP2_LEVELS = 2
+BINARY_KEEP_TOP3_LEVELS = 3
+BINARY_KEEP_TOP4_LEVELS = 4
 
 
 def to_gray(image_bgr):
@@ -148,11 +150,25 @@ def preprocess_crop(crop_bgr):
         keep_top_levels=BINARY_KEEP_TOP2_LEVELS,
     )
 
+    binary_top3, threshold_top3 = binarize_palette_7(
+        palette_7,
+        keep_top_levels=BINARY_KEEP_TOP3_LEVELS,
+    )
+
+    binary_top4, threshold_top4 = binarize_palette_7(
+        palette_7,
+        keep_top_levels=BINARY_KEEP_TOP4_LEVELS,
+    )
+
     return {
         "gray": gray,
         "palette_7": palette_7,
         "binary_top1": binary_top1,
         "binary_top2": binary_top2,
+        "binary_top3": binary_top3,
+        "binary_top4": binary_top4,
         "threshold_top1": threshold_top1,
         "threshold_top2": threshold_top2,
+        "threshold_top3": threshold_top3,
+        "threshold_top4": threshold_top4,
     }
