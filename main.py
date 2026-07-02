@@ -37,7 +37,13 @@ from image_io import (
     save_image,
 )
 from pleural_interruptions import detect_pleural_interruptions
-from pleural_nodules import detect_pleural_nodules
+from pleural_nodules import (
+    append_reject_summary,
+    detect_pleural_nodules,
+)
+from pleural_nodules import (
+    save_debug as save_nodule_debug_csv,
+)
 from preprocessing import preprocess_crop
 from principal_component import (
     build_principal_component,
@@ -77,6 +83,41 @@ except ImportError:
 
 FINAL_TEST_DIR = config.RESULTS_DIR / "FINAL_CONTOUR_TEST"
 
+# ============================================================
+# OUTPUT CURAT
+# ============================================================
+# Cand este False, main.py salveaza din nou tot pipeline-ul organizat
+# pe folderele complete 00, 01, 02, ..., 14.
+# Daca vrei din nou doar folderul curat cu 3 poze, schimbi pe True.
+SAVE_ONLY_CONTOUR_AND_FINAL = False
+
+_REAL_SAVE_IMAGE = save_image
+_REAL_SAVE_NODULE_DEBUG_CSV = save_nodule_debug_csv
+_REAL_APPEND_REJECT_SUMMARY = append_reject_summary
+
+
+def save_image(path, image):
+    if SAVE_ONLY_CONTOUR_AND_FINAL:
+        return None
+    return _REAL_SAVE_IMAGE(path, image)
+
+
+def save_final_image(path, image):
+    return _REAL_SAVE_IMAGE(path, image)
+
+
+def save_nodule_debug_csv(*args, **kwargs):
+    if SAVE_ONLY_CONTOUR_AND_FINAL:
+        return {}
+    return _REAL_SAVE_NODULE_DEBUG_CSV(*args, **kwargs)
+
+
+def append_reject_summary(*args, **kwargs):
+    if SAVE_ONLY_CONTOUR_AND_FINAL:
+        return None
+    return _REAL_APPEND_REJECT_SUMMARY(*args, **kwargs)
+
+
 CROP_DIR = FINAL_TEST_DIR / "00_CROP"
 PALETTE_7_DIR = FINAL_TEST_DIR / "00_PALETTE_7"
 BINARY_TOP1_DIR = FINAL_TEST_DIR / "01_BINARY_TOP1"
@@ -104,9 +145,11 @@ PLEURAL_NODULE_DIR = FINAL_TEST_DIR / "13_PLEURAL_NODULE_MARKING"
 PLEURAL_NODULE_COMPARISON_DIR = PLEURAL_NODULE_DIR / "00_COMPARATIE_CU_COMPONENTE"
 PLEURAL_NODULE_STEPS_DIR = PLEURAL_NODULE_DIR / "00_PASI_FILTRARE_TOATE_POZELE"
 PLEURAL_NODULE_ORIGINAL_BOX_DIR = PLEURAL_NODULE_DIR / "01_NODULI_CHENAR_PE_ORIGINAL"
+PLEURAL_NODULE_REJECT_DEBUG_DIR = PLEURAL_NODULE_DIR / "02_DEBUG_CSV_REJECT_TABLE"
 FINAL_FINDINGS_ORIGINAL_DIR = (
     FINAL_TEST_DIR / "14_VARIANTA_FINALA_PLEURA_INTRERUPERI_NODULI"
 )
+CLEAN_OUTPUT_DIR = FINAL_TEST_DIR / "00_CONTUR_SI_ULTIMUL_PAS"
 PLEURAL_NODULE_STAGE0_DIR = PLEURAL_NODULE_DIR / "01_STAGE_0_TOT_TOP3_SUB_PLEURA"
 PLEURAL_NODULE_STAGE1_DIR = PLEURAL_NODULE_DIR / "02_STAGE_1_CONTACT_CU_PLEURA"
 PLEURAL_NODULE_STAGE2_DIR = PLEURAL_NODULE_DIR / "03_STAGE_2_COBORARE_SUB_PLEURA"
@@ -413,6 +456,33 @@ def draw_contour_mask_on_image(result, mask, color, thickness=2):
     return result
 
 
+def draw_filled_mask_on_image(result, mask, color, alpha=0.35, contour_thickness=2):
+    binary = normalize_debug_mask(mask)
+
+    if binary is None or np.count_nonzero(binary > 0) == 0:
+        return result
+
+    overlay = result.copy()
+    overlay[binary > 0] = color
+
+    result = cv2.addWeighted(
+        overlay,
+        float(alpha),
+        result,
+        1.0 - float(alpha),
+        0,
+    )
+
+    result = draw_contour_mask_on_image(
+        result,
+        binary,
+        color=color,
+        thickness=contour_thickness,
+    )
+
+    return result
+
+
 def draw_bounding_boxes_on_image(result, mask, color, thickness=2, pad=4):
     binary = normalize_debug_mask(mask)
 
@@ -483,20 +553,20 @@ def draw_final_findings_on_original(
         result,
         pleura_original,
         color=(0, 255, 0),
-        thickness=1,
+        thickness=2,
     )
     result = draw_contour_mask_on_image(
         result,
         interruption_original,
         color=(0, 255, 255),
-        thickness=1,
+        thickness=2,
     )
     # Nodulii se marcheaza cu dreptunghi rosu, conform cerintei proiectului.
     result = draw_bounding_boxes_on_image(
         result,
         nodule_original,
         color=(0, 0, 255),
-        thickness=1,
+        thickness=2,
         pad=4,
     )
 
@@ -513,6 +583,121 @@ def draw_final_findings_on_original(
     cv2.putText(
         result,
         "verde=pleura | galben=intreruperi | rosu=noduli",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return result
+
+
+def draw_final_components_on_original(
+    original_image,
+    crop_box,
+    pleura_mask_crop,
+    interruption_mask_crop,
+    component_mask_crop,
+):
+    result = to_bgr_debug(original_image)
+
+    pleura_original = project_mask_to_original(
+        pleura_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+    interruption_original = project_mask_to_original(
+        interruption_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+    component_original = project_mask_to_original(
+        component_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+
+    # Aici nu desenam dreptunghiuri.
+    # Rosu reprezinta chiar forma componentelor identificate.
+    result = draw_contour_mask_on_image(
+        result,
+        pleura_original,
+        color=(0, 255, 0),
+        thickness=2,
+    )
+    result = draw_contour_mask_on_image(
+        result,
+        interruption_original,
+        color=(0, 255, 255),
+        thickness=2,
+    )
+    result = draw_filled_mask_on_image(
+        result,
+        component_original,
+        color=(0, 0, 255),
+        alpha=0.35,
+        contour_thickness=2,
+    )
+
+    cv2.putText(
+        result,
+        "verde=pleura | galben=intreruperi | rosu=componente identificate",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (0, 0, 0),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        result,
+        "verde=pleura | galben=intreruperi | rosu=componente identificate",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return result
+
+
+def draw_pleura_contour_only_on_original(
+    original_image,
+    crop_box,
+    pleura_mask_crop,
+):
+    result = to_bgr_debug(original_image)
+
+    pleura_original = project_mask_to_original(
+        pleura_mask_crop,
+        original_image.shape,
+        crop_box,
+    )
+
+    result = draw_contour_mask_on_image(
+        result,
+        pleura_original,
+        color=(0, 255, 0),
+        thickness=2,
+    )
+
+    cv2.putText(
+        result,
+        "verde=contur pleura",
+        (14, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (0, 0, 0),
+        3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        result,
+        "verde=contur pleura",
         (14, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.62,
@@ -1111,8 +1296,22 @@ def process_image(index: int, current: int, total: int) -> None:
         pleura_mask=top2_unification_result["unified_mask"],
         bridge_mask=top2_unification_result["bridge_mask"],
         interruption_mask=interruption_result["interruption_mask"],
+        # Algoritmul 1D cauta turturii in TOP3 sub zonele de ingrosare.
+        binary_top2=binary_top2,
         binary_top3=binary_top3,
         binary_top4=None,
+    )
+
+    save_nodule_debug_csv(
+        nodule_result,
+        str(PLEURAL_NODULE_REJECT_DEBUG_DIR),
+        prefix=f"{index:02d}",
+        save_stage_images=False,
+    )
+    append_reject_summary(
+        str(PLEURAL_NODULE_REJECT_DEBUG_DIR / "ALL_reject_table.csv"),
+        nodule_result,
+        prefix=f"{index:02d}",
     )
 
     # Pentru noduli folosim masca de dreptunghi daca detectorul o furnizeaza.
@@ -1165,6 +1364,41 @@ def process_image(index: int, current: int, total: int) -> None:
             index, "varianta_finala_pleura_intreruperi_noduli_pe_original"
         ),
         final_findings_original_debug,
+    )
+
+    final_pleura_contour_original_debug = draw_pleura_contour_only_on_original(
+        original_image=image,
+        crop_box=crop_box,
+        pleura_mask_crop=top2_unification_result["unified_mask"],
+    )
+
+    save_final_image(
+        CLEAN_OUTPUT_DIR / make_output_name(index, "01_contur_pleura_pe_original"),
+        final_pleura_contour_original_debug,
+    )
+    save_final_image(
+        CLEAN_OUTPUT_DIR
+        / make_output_name(
+            index, "02_ultimul_pas_pleura_intreruperi_noduli_pe_original"
+        ),
+        final_findings_original_debug,
+    )
+
+    component_mask_crop = nodule_result.get(
+        "nodule_core_mask",
+        nodule_result.get("nodule_mask", nodule_visual_mask),
+    )
+    identified_components_original_debug = draw_final_components_on_original(
+        original_image=image,
+        crop_box=crop_box,
+        pleura_mask_crop=top2_unification_result["unified_mask"],
+        interruption_mask_crop=interruption_result["interruption_mask"],
+        component_mask_crop=component_mask_crop,
+    )
+    save_final_image(
+        CLEAN_OUTPUT_DIR
+        / make_output_name(index, "03_componente_identificate_pe_original"),
+        identified_components_original_debug,
     )
 
     save_image(
@@ -1433,30 +1667,35 @@ def make_final_contours_contact_sheet(exclude_indices=None):
 def main() -> None:
     reset_dir(config.RESULTS_DIR)
 
-    ensure_dir(CROP_DIR)
-    ensure_dir(PALETTE_7_DIR)
-    ensure_dir(BINARY_TOP1_DIR)
-    ensure_dir(BINARY_TOP2_DIR)
-    ensure_dir(BINARY_TOP3_DIR)
-    ensure_dir(BINARY_TOP4_DIR)
-    ensure_dir(BINARY_TOP3_CONTOUR_DIR)
-    ensure_dir(BINARY_TOP4_CONTOUR_DIR)
-    ensure_dir(PRINCIPAL_DIR)
-    ensure_dir(SECONDARY_DIR)
-    ensure_dir(MERGED_FINAL_DIR)
-    ensure_dir(SMALL_COMPONENT_CLEAN_DIR)
-    ensure_dir(FINAL_MASK_CROP_DIR)
-    ensure_dir(FINAL_CONTOUR_CROP_DIR)
-    ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
-    ensure_dir(TOP2_CONTOUR_ONLY_DIR)
-    ensure_dir(TOP2_UNIFIED_CONTOUR_ONLY_DIR)
-    ensure_dir(PLEURAL_INTERRUPTION_DIR)
-    ensure_dir(PLEURAL_INTERRUPTION_COMPARISON_DIR)
-    ensure_dir(PLEURAL_NODULE_DIR)
-    ensure_dir(PLEURAL_NODULE_COMPARISON_DIR)
-    ensure_dir(PLEURAL_NODULE_STEPS_DIR)
-    ensure_dir(PLEURAL_NODULE_ORIGINAL_BOX_DIR)
-    ensure_dir(FINAL_FINDINGS_ORIGINAL_DIR)
+    if SAVE_ONLY_CONTOUR_AND_FINAL:
+        ensure_dir(CLEAN_OUTPUT_DIR)
+    else:
+        ensure_dir(CROP_DIR)
+        ensure_dir(PALETTE_7_DIR)
+        ensure_dir(BINARY_TOP1_DIR)
+        ensure_dir(BINARY_TOP2_DIR)
+        ensure_dir(BINARY_TOP3_DIR)
+        ensure_dir(BINARY_TOP4_DIR)
+        ensure_dir(BINARY_TOP3_CONTOUR_DIR)
+        ensure_dir(BINARY_TOP4_CONTOUR_DIR)
+        ensure_dir(PRINCIPAL_DIR)
+        ensure_dir(SECONDARY_DIR)
+        ensure_dir(MERGED_FINAL_DIR)
+        ensure_dir(SMALL_COMPONENT_CLEAN_DIR)
+        ensure_dir(FINAL_MASK_CROP_DIR)
+        ensure_dir(FINAL_CONTOUR_CROP_DIR)
+        ensure_dir(FINAL_CONTOUR_ORIGINAL_DIR)
+        ensure_dir(TOP2_CONTOUR_ONLY_DIR)
+        ensure_dir(TOP2_UNIFIED_CONTOUR_ONLY_DIR)
+        ensure_dir(PLEURAL_INTERRUPTION_DIR)
+        ensure_dir(PLEURAL_INTERRUPTION_COMPARISON_DIR)
+        ensure_dir(PLEURAL_NODULE_DIR)
+        ensure_dir(PLEURAL_NODULE_COMPARISON_DIR)
+        ensure_dir(PLEURAL_NODULE_STEPS_DIR)
+        ensure_dir(PLEURAL_NODULE_ORIGINAL_BOX_DIR)
+        ensure_dir(PLEURAL_NODULE_REJECT_DEBUG_DIR)
+        ensure_dir(FINAL_FINDINGS_ORIGINAL_DIR)
+        ensure_dir(CLEAN_OUTPUT_DIR)
 
     indices = get_indices_to_process()
 
@@ -1469,7 +1708,8 @@ def main() -> None:
     for current, index in enumerate(indices, start=1):
         process_image(index, current, total)
 
-    make_final_contours_contact_sheet(exclude_indices=set())
+    if not SAVE_ONLY_CONTOUR_AND_FINAL:
+        make_final_contours_contact_sheet(exclude_indices=set())
 
 
 if __name__ == "__main__":

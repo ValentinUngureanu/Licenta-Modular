@@ -1,86 +1,153 @@
 from __future__ import annotations
 
+import csv
+import os
 from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 
 # ============================================================
-# PLEURAL NODULES 36 - NODUL = INGROSARE LOCALA A PLEUREI
+# PLEURAL NODULES 80 - TOP3 CU CONFIRMARE DIN TOP2
 # ============================================================
-# Ideea acestei variante:
-#   - NU mai cautam nodulul ca pe o componenta separata sub pleura;
-#   - masca finala a pleurei este sursa principala;
-#   - masuram grosimea pleurei pe fiecare coloana;
-#   - cautam zone unde grosimea/marginea inferioara devine local mai mare
-#     decat vecinatatea;
-#   - nodulii finali sunt returnati ca dreptunghiuri, pentru folderul 14;
-#   - zonele cu intreruperi sunt excluse din candidatii finali.
+# Rolul acestei variante:
+#   - NU detecteaza noduli finali;
+#   - NU calculeaza grosimea pleurei;
+#   - NU cauta turturi;
+#   - ia binary_top3 si sterge mai intai partea comuna cu pleura deja detectata;
+#   - pastreaza apoi DOAR pixelii aflati sub pleura;
+#   - sterge primele randuri/pixeli de sus ale fiecarei componente
+#     ca sa rupa puntile subtiri orizontale;
+#   - sparge bridge-urile / puntile subtiri dintre componente;
+#   - abia dupa aceste operatii elimina componentele insulare, fiindca
+#     top-peel-ul si spargerea bridge-urilor pot crea insule noi;
+#   - aplica apoi filtrul de marime minima pe componentele ramase;
+#   - aplica apoi filtrul de marime maxima pentru aria, latimea si inaltimea componentelor;
+#   - elimina componentele TOP3 care NU au corespondent de turture si in TOP2;
+#   - elimina componentele TOP3 care au deasupra o intrerupere pleurala;
+#   - aplica la final un filtru de ingrosare pleurala ADAPTIV: un turture este pastrat
+#     daca grosimea pleurei deasupra lui este mai mare decat referinta calculata
+#     local din aceeasi pleura, fara praguri fixe in pixeli pentru grosime.
+#
+# Scop:
+#   - Stage 0 arata TOP3 dupa stergerea intersectiei cu pleura detectata;
+#   - Stage 1 arata TOP3 curatat, pastrat doar sub linia pleurala;
+#   - Stage 2 sterge primele randuri/pixeli de sus din fiecare componenta;
+#   - Stage 3 sparge bridge-urile mai subtiri de prag;
+#   - Stage 4 elimina insulele create/ramase dupa spargeri;
+#   - Stage 5 elimina componentele prea mici/prea mari, componentele sub intreruperi
+#   - si componentele fara ingrosare pleurala;
+#   - folderul 14 va marca rosu TOP3-ul ramas dupa acesti pasi.
 # ============================================================
 
 NODULE_ENABLE = True
 FILTER_STAGE = 5
 
-# Profil pleura.
-PROFILE_SMOOTH_WINDOW_PX = 7
-PROFILE_BASELINE_WINDOW_PX = 65
+# In varianta 80 revenim la TOP3 ca sursa principala de candidati.
+# TOP2 este folosit doar ca filtru de confirmare: daca turturele apare si in TOP2,
+# componenta TOP3 poate ramane candidat de nodul.
+NODULE_CANDIDATE_SOURCE = "binary_top3"  # "binary_top2" sau "binary_top3"
 
-# Pentru a nu lua capetele pleurei, unde masca poate fi instabila.
-IGNORE_END_MARGIN_PX = 10
+COLOR_PLEURA = (0, 255, 0)  # verde
+COLOR_CANDIDATE = (0, 0, 255)  # rosu
+UNDER_PLEURA_START_OFFSET_PX = 1  # pastreaza TOP3 de la bottom_y + offset in jos
+CONTACT_WITH_PLEURA_MAX_GAP_PX = (
+    5  # componenta trebuie sa aiba pixeli in primii N px sub pleura
+)
+REMOVE_COMMON_WITH_DETECTED_PLEURA = True
+COMMON_PLEURA_DILATE_PX = 0  # 0 = sterge doar intersectia exacta TOP3 ∩ pleura
+TOP_PEEL_ROWS_FROM_COMPONENTS_PX = (
+    2  # sterge primii N pixeli de sus din fiecare componenta/coloana
+)
 
-# Stage 2 - praguri pentru ingrosare locala.
-# thickness_prominence = grosimea locala - grosimea normala din vecinatate.
-# bottom_prominence    = cat coboara marginea inferioara fata de vecinatate.
-MIN_ABSOLUTE_THICKNESS_PX = 4.0
-MIN_THICKNESS_PROMINENCE_PX = 2.0
-MIN_BOTTOM_PROMINENCE_PX = 1.2
-STRONG_THICKNESS_PROMINENCE_PX = 3.8
-STRONG_BOTTOM_PROMINENCE_PX = 4.0
+# Spargere bridge-uri subtiri.
+# Ideea: un bridge orizontal subtire are grosime verticala mica.
+# Stergem segmentele verticale continue mai mici decat 5 px.
+# Cu valoarea 5: se sterg grosimi 1, 2, 3, 4 px; grosimea 5+ ramane.
+BREAK_THIN_BRIDGES = True
+THIN_BRIDGE_MIN_VERTICAL_THICKNESS_PX = 10
 
-# Grupare pe coloane candidate.
-GROUP_MAX_X_GAP_PX = 3
-GROUP_EXTRA_X_PAD_PX = 2
-GROUP_EXTRA_Y_PAD_PX = 2
+# Filtru 1: marime minima.
+# Il aplicam dupa top-peel, spargere bridge-uri si eliminare insule.
+FILTER_MIN_COMPONENT_SIZE = True
+MIN_COMPONENT_AREA_PX = 500
+MIN_COMPONENT_WIDTH_PX = 15
+MIN_COMPONENT_HEIGHT_PX = 20
 
-# Stage 3 - dimensiuni minime.
-MIN_NODULE_WIDTH_PX = 5
-MIN_NODULE_HEIGHT_PX = 5
-MIN_NODULE_AREA_PX = 18
-MIN_NODULE_BBOX_AREA_PX = 30
-MIN_NODULE_ACTIVE_COLUMNS = 4
-MIN_NODULE_MEAN_THICKNESS_PROMINENCE_PX = 1.1
-MIN_NODULE_MAX_THICKNESS_PROMINENCE_PX = 2.0
-MIN_NODULE_MAX_BOTTOM_PROMINENCE_PX = 1.0
+# Filtru 2: marime maxima.
+# Componenta este eliminata daca depaseste ORICARE dintre aceste limite.
+# Daca vrei sa dezactivezi un criteriu separat, pune valoarea lui pe 0.
+FILTER_MAX_COMPONENT_SIZE = True
+MAX_COMPONENT_AREA_PX = 2500
+MAX_COMPONENT_WIDTH_PX = 1500
+MAX_COMPONENT_HEIGHT_PX = 1000
 
-# Stage 4 - eliminare zone exagerate.
-MAX_NODULE_WIDTH_PX = 85
-MAX_NODULE_HEIGHT_PX = 35
-MAX_NODULE_AREA_PX = 2600
-MAX_NODULE_BBOX_AREA_PX = 3000
+# Filtru 3: latimea medie a turturelui.
+# Pentru fiecare componenta calculam latimea medie pe randurile ocupate:
+#   average_width = media numarului de pixeli foreground pe fiecare rand al componentei.
+# Asta separa cazul "turture subtire vertical" de artefactele late/blocuri.
+# O limita pusa pe 0 este ignorata.
+FILTER_BY_AVERAGE_TURTURE_WIDTH = True
+MIN_AVERAGE_TURTURE_WIDTH_PX = 0.0
+MAX_AVERAGE_TURTURE_WIDTH_PX = 65.0
 
-# Stage 5 - forma finala.
-# Pentru metoda pe grosimea pleurei NU mai cerem ca nodulul sa fie vertical/lung.
-# Cerem doar sa fie o ingrosare locala reala si sa nu fie doar o bucata punctiforma.
-FINAL_MIN_WIDTH_PX = 5
-FINAL_MIN_HEIGHT_PX = 5
-FINAL_MIN_BBOX_AREA_PX = 35
-FINAL_MIN_SCORE = 3.0
+# Filtru 4: confirmare prin TOP2.
+# Plecam de la turturii gasiti in TOP3, dar pastram componenta doar daca
+# aceeasi zona are suport si in TOP2. Astfel un turture vazut in ambele masti
+# este considerat mai credibil pentru nodul.
+FILTER_BY_TOP2_TURTURE_CONFIRMATION = True
+TOP2_CONFIRM_X_PADDING_PX = 5
+TOP2_CONFIRM_Y_PADDING_PX = 5
+TOP2_CONFIRM_MIN_OVERLAP_PX = 1
 
-# Excludere noduli pe intreruperi.
-EXCLUDE_NODULES_ON_INTERRUPTION_ZONES = True
-INTERRUPTION_EXCLUDE_DILATE_PX = 8
-INTERRUPTION_EXCLUDE_MIN_OVERLAP_PX = 1
+# Filtru 5: regula medicala pentru intreruperi.
+# Daca deasupra unei componente TOP3 exista o intrerupere pleurala,
+# componenta nu este considerata nodul.
+FILTER_COMPONENTS_ABOVE_INTERRUPTION = True
+INTERRUPTION_X_PADDING_PX = 4
+INTERRUPTION_ABOVE_VERTICAL_TOLERANCE_PX = 6
+INTERRUPTION_MIN_OVERLAP_COLUMNS_PX = 1
 
-# Culori debug BGR.
-COLOR_FINAL_CONTOUR = (0, 0, 255)  # rosu in debug crop = pleura reper
-COLOR_SEARCH_BAND = (255, 0, 0)  # albastru
-COLOR_CANDIDATE = (255, 255, 0)  # cyan/galben
-COLOR_REJECTED = (0, 120, 255)  # portocaliu
-COLOR_NODULE = (0, 255, 255)  # galben/cyan in debug
-COLOR_PROFILE = (255, 0, 255)  # magenta
-COLOR_BOX = (0, 255, 255)
+# Filtru 6: ingrosarea pleurei deasupra turturelui - ADAPTIV.
+# Pentru fiecare componenta ramasa, masuram grosimea locala a pleurei in zona
+# aflata deasupra componentei si o comparam cu o referinta calculata din aceeasi
+# pleura, in stanga/dreapta componentei.
+#
+# Nu mai folosim praguri fixe de tip: minim 3 px, delta 2 px, ratio 1.20.
+# Decizia se adapteaza la fiecare imagine in parte:
+#   - local_value = percentila 75 a grosimii deasupra componentei;
+#   - reference_value = percentila 60 a grosimii din zonele laterale;
+#   - componenta ramane daca local_value >= reference_value.
+#
+# Sursa recomandata este binary_top2, pentru ca pleura detectata finala poate fi
+# doar o linie/forma finala, iar TOP2 pastreaza mai bine banda pleurala.
+# Daca binary_top2 nu este disponibil, folosim pleura_mask ca fallback.
+FILTER_BY_PLEURA_THICKENING = True
+PLEURA_THICKENING_SOURCE = "binary_top2"  # "binary_top2" sau "pleura_mask"
+PLEURA_THICKENING_BAND_UP_PX = (
+    14  # cauta grosimea deasupra marginii inferioare a pleurei
+)
+PLEURA_THICKENING_BAND_DOWN_PX = 3  # include putin si sub marginea inferioara
+PLEURA_THICKENING_X_PADDING_PX = 8  # extinde zona candidatului stanga/dreapta
+PLEURA_THICKENING_REFERENCE_SIDE_PX = 35  # zona laterala folosita ca referinta locala
+PLEURA_THICKENING_LOCAL_PERCENTILE = (
+    75.0  # grosimea locala reprezentativa deasupra componentei
+)
+PLEURA_THICKENING_REFERENCE_PERCENTILE = (
+    60.0  # referinta laterala normala, calculata local
+)
+PLEURA_THICKENING_GLOBAL_FALLBACK_PERCENTILE = (
+    60.0  # fallback daca lipsesc zone laterale
+)
+PLEURA_THICKENING_PROFILE_MIN_USABLE_PX = 1.0  # sub acest nivel filtrul devine no-op
+
+COLOR_TEXT = (255, 255, 255)
+COLOR_TEXT_SHADOW = (0, 0, 0)
 
 
+# ============================================================
+# Helpers
+# ============================================================
 def _to_bgr(image: np.ndarray) -> np.ndarray:
     if image is None or image.size == 0:
         raise ValueError("Imaginea de intrare este goala sau None.")
@@ -109,580 +176,41 @@ def _as_binary_mask(
         gray = mask.copy()
 
     if shape is not None and gray.shape[:2] != shape:
-        gray = cv2.resize(gray, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST)
+        gray = cv2.resize(
+            gray,
+            (shape[1], shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
 
     return np.where(gray > 0, 255, 0).astype(np.uint8)
-
-
-def _dilate(mask: np.ndarray, radius_px: int) -> np.ndarray:
-    binary = _as_binary_mask(mask)
-
-    if radius_px <= 0 or np.count_nonzero(binary > 0) == 0:
-        return binary
-
-    size = 2 * int(radius_px) + 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
-    result = cv2.dilate(binary, kernel, iterations=1)
-    result[result > 0] = 255
-    return result
-
-
-def _rolling_median_float(values: np.ndarray, window: int) -> np.ndarray:
-    values = np.asarray(values, dtype=np.float32)
-
-    if len(values) == 0 or window <= 1:
-        return values.copy()
-
-    if window % 2 == 0:
-        window += 1
-
-    if len(values) < window:
-        return values.copy()
-
-    pad = window // 2
-    padded = np.pad(values, (pad, pad), mode="edge")
-    result = np.zeros_like(values, dtype=np.float32)
-
-    for index in range(len(values)):
-        result[index] = float(np.median(padded[index : index + window]))
-
-    return result
-
-
-def _smooth_profile(values: np.ndarray, window: int) -> np.ndarray:
-    window = max(1, int(window))
-    if window % 2 == 0:
-        window += 1
-
-    if window <= 1 or len(values) < window:
-        return values.astype(np.float32).copy()
-
-    return _rolling_median_float(values, window)
-
-
-def _merge_masks(
-    *masks: np.ndarray | None,
-    shape: Tuple[int, int] | None = None,
-) -> np.ndarray:
-    base_shape = shape
-
-    for mask in masks:
-        if mask is not None:
-            base_shape = mask.shape[:2]
-            break
-
-    if base_shape is None:
-        raise ValueError("Nu pot determina dimensiunea pentru merge_masks.")
-
-    result = np.zeros(base_shape, dtype=np.uint8)
-
-    for mask in masks:
-        if mask is None:
-            continue
-        binary = _as_binary_mask(mask, base_shape)
-        result[binary > 0] = 255
-
-    return result
-
-
-def _build_pleura_profiles(pleura_mask: np.ndarray) -> Dict[str, object]:
-    pleura = _as_binary_mask(pleura_mask)
-    _height, width = pleura.shape[:2]
-
-    valid_xs: List[int] = []
-    top_values: List[float] = []
-    bottom_values: List[float] = []
-
-    for x in range(width):
-        ys = np.flatnonzero(pleura[:, x] > 0)
-        if len(ys) == 0:
-            continue
-
-        valid_xs.append(int(x))
-        top_values.append(float(ys[0]))
-        bottom_values.append(float(ys[-1]))
-
-    valid_mask = np.zeros(width, dtype=bool)
-
-    if len(valid_xs) == 0:
-        return {
-            "valid": valid_mask,
-            "top_y": np.zeros(width, dtype=np.float32),
-            "bottom_y": np.zeros(width, dtype=np.float32),
-            "thickness": np.zeros(width, dtype=np.float32),
-            "x_min": 0,
-            "x_max": -1,
-        }
-
-    xs_arr = np.array(valid_xs, dtype=np.float32)
-    top_arr = np.array(top_values, dtype=np.float32)
-    bottom_arr = np.array(bottom_values, dtype=np.float32)
-
-    x_min = int(xs_arr[0])
-    x_max = int(xs_arr[-1])
-
-    all_x = np.arange(width, dtype=np.float32)
-    top_interp = np.interp(all_x, xs_arr, top_arr).astype(np.float32)
-    bottom_interp = np.interp(all_x, xs_arr, bottom_arr).astype(np.float32)
-
-    top_smooth = _smooth_profile(top_interp, PROFILE_SMOOTH_WINDOW_PX)
-    bottom_smooth = _smooth_profile(bottom_interp, PROFILE_SMOOTH_WINDOW_PX)
-    thickness = np.maximum(0.0, bottom_smooth - top_smooth + 1.0)
-
-    valid_mask[x_min : x_max + 1] = True
-
-    # Scoatem capetele instabile.
-    if IGNORE_END_MARGIN_PX > 0:
-        valid_mask[: max(0, x_min + IGNORE_END_MARGIN_PX)] = False
-        valid_mask[min(width, x_max - IGNORE_END_MARGIN_PX + 1) :] = False
-
-    thickness_baseline = _rolling_median_float(thickness, PROFILE_BASELINE_WINDOW_PX)
-    bottom_baseline = _rolling_median_float(bottom_smooth, PROFILE_BASELINE_WINDOW_PX)
-
-    thickness_prominence = thickness - thickness_baseline
-    bottom_prominence = bottom_smooth - bottom_baseline
-
-    return {
-        "valid": valid_mask,
-        "top_y": top_smooth,
-        "bottom_y": bottom_smooth,
-        "thickness": thickness,
-        "thickness_baseline": thickness_baseline,
-        "bottom_baseline": bottom_baseline,
-        "thickness_prominence": thickness_prominence,
-        "bottom_prominence": bottom_prominence,
-        "x_min": x_min,
-        "x_max": x_max,
-    }
-
-
-def _build_search_band_from_profile(
-    shape: Tuple[int, int],
-    profile: Dict[str, object],
-) -> np.ndarray:
-    height, width = shape[:2]
-    band = np.zeros((height, width), dtype=np.uint8)
-
-    valid = np.asarray(profile["valid"], dtype=bool)
-    top_y = np.asarray(profile["top_y"], dtype=np.float32)
-    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
-
-    for x in range(width):
-        if x >= len(valid) or not bool(valid[x]):
-            continue
-
-        y1 = max(0, int(round(float(top_y[x]))) - GROUP_EXTRA_Y_PAD_PX)
-        y2 = min(height - 1, int(round(float(bottom_y[x]))) + GROUP_EXTRA_Y_PAD_PX)
-        if y2 >= y1:
-            band[y1 : y2 + 1, x] = 255
-
-    return band
-
-
-def _build_candidate_columns(profile: Dict[str, object]) -> np.ndarray:
-    valid = np.asarray(profile["valid"], dtype=bool)
-    thickness = np.asarray(profile["thickness"], dtype=np.float32)
-    thickness_prom = np.asarray(profile["thickness_prominence"], dtype=np.float32)
-    bottom_prom = np.asarray(profile["bottom_prominence"], dtype=np.float32)
-
-    width = len(thickness)
-    candidate_columns = np.zeros(width, dtype=bool)
-
-    for x in range(width):
-        if x >= len(valid) or not bool(valid[x]):
-            continue
-
-        if thickness[x] < MIN_ABSOLUTE_THICKNESS_PX:
-            continue
-
-        local_thickening = (
-            thickness_prom[x] >= MIN_THICKNESS_PROMINENCE_PX
-            and bottom_prom[x] >= MIN_BOTTOM_PROMINENCE_PX
-        )
-        strong_thickening = thickness_prom[x] >= STRONG_THICKNESS_PROMINENCE_PX
-        strong_down_bulge = (
-            bottom_prom[x] >= STRONG_BOTTOM_PROMINENCE_PX and thickness_prom[x] >= 0.5
-        )
-
-        if local_thickening or strong_thickening or strong_down_bulge:
-            candidate_columns[x] = True
-
-    return candidate_columns
-
-
-def _split_true_segments(flags: np.ndarray, max_gap: int) -> List[Tuple[int, int]]:
-    flags = np.asarray(flags, dtype=bool)
-    segments: List[Tuple[int, int]] = []
-
-    start: int | None = None
-    last_true: int | None = None
-    gap = 0
-
-    for index, value in enumerate(flags):
-        if value:
-            if start is None:
-                start = index
-            last_true = index
-            gap = 0
-            continue
-
-        if start is None:
-            continue
-
-        gap += 1
-        if gap > max_gap:
-            end = int(last_true if last_true is not None else index - gap)
-            segments.append((int(start), int(end)))
-            start = None
-            last_true = None
-            gap = 0
-
-    if start is not None and last_true is not None:
-        segments.append((int(start), int(last_true)))
-
-    return segments
-
-
-def _build_group_mask_from_segment(
-    pleura_mask: np.ndarray,
-    profile: Dict[str, object],
-    x1: int,
-    x2: int,
-) -> np.ndarray:
-    pleura = _as_binary_mask(pleura_mask)
-    height, width = pleura.shape[:2]
-
-    x1 = max(0, min(width - 1, int(x1) - GROUP_EXTRA_X_PAD_PX))
-    x2 = max(0, min(width - 1, int(x2) + GROUP_EXTRA_X_PAD_PX))
-
-    result = np.zeros_like(pleura, dtype=np.uint8)
-    if x2 < x1:
-        return result
-
-    top_y = np.asarray(profile["top_y"], dtype=np.float32)
-    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
-
-    for x in range(x1, x2 + 1):
-        y1 = max(0, int(round(float(top_y[x]))) - GROUP_EXTRA_Y_PAD_PX)
-        y2 = min(height - 1, int(round(float(bottom_y[x]))) + GROUP_EXTRA_Y_PAD_PX)
-        if y2 < y1:
-            continue
-        column = pleura[y1 : y2 + 1, x]
-        result[y1 : y2 + 1, x][column > 0] = 255
-
-    return result
-
-
-def _group_local_thickening_regions(
-    pleura_mask: np.ndarray,
-    profile: Dict[str, object],
-    candidate_columns: np.ndarray,
-) -> List[Dict[str, object]]:
-    segments = _split_true_segments(candidate_columns, GROUP_MAX_X_GAP_PX)
-
-    thickness = np.asarray(profile["thickness"], dtype=np.float32)
-    thickness_prom = np.asarray(profile["thickness_prominence"], dtype=np.float32)
-    bottom_prom = np.asarray(profile["bottom_prominence"], dtype=np.float32)
-
-    groups: List[Dict[str, object]] = []
-
-    for group_index, (x1, x2) in enumerate(segments, start=1):
-        group_mask = _build_group_mask_from_segment(pleura_mask, profile, x1, x2)
-        ys, xs = np.where(group_mask > 0)
-
-        if len(xs) == 0:
-            continue
-
-        min_x = int(np.min(xs))
-        max_x = int(np.max(xs))
-        min_y = int(np.min(ys))
-        max_y = int(np.max(ys))
-        width = max(1, max_x - min_x + 1)
-        height = max(1, max_y - min_y + 1)
-        area = int(len(xs))
-        bbox_area = int(width * height)
-        active_columns = int(len(np.unique(xs)))
-
-        seg_x1 = max(0, int(x1))
-        seg_x2 = min(len(thickness) - 1, int(x2))
-        local_slice = slice(seg_x1, seg_x2 + 1)
-
-        max_thickness = (
-            float(np.max(thickness[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-        mean_thickness = (
-            float(np.mean(thickness[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-        max_thickness_prom = (
-            float(np.max(thickness_prom[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-        mean_thickness_prom = (
-            float(np.mean(thickness_prom[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-        max_bottom_prom = (
-            float(np.max(bottom_prom[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-        mean_bottom_prom = (
-            float(np.mean(bottom_prom[local_slice])) if seg_x2 >= seg_x1 else 0.0
-        )
-
-        score = float(
-            max_thickness_prom + 0.8 * max_bottom_prom + 0.3 * mean_thickness_prom
-        )
-
-        groups.append(
-            {
-                "index": int(group_index),
-                "mask": group_mask,
-                "x_min": int(min_x),
-                "x_max": int(max_x),
-                "y_min": int(min_y),
-                "y_max": int(max_y),
-                "width": int(width),
-                "height": int(height),
-                "area": int(area),
-                "bbox_area": int(bbox_area),
-                "active_columns": int(active_columns),
-                "max_thickness": float(max_thickness),
-                "mean_thickness": float(mean_thickness),
-                "max_thickness_prominence": float(max_thickness_prom),
-                "mean_thickness_prominence": float(mean_thickness_prom),
-                "max_bottom_prominence": float(max_bottom_prom),
-                "mean_bottom_prominence": float(mean_bottom_prom),
-                "height_to_width_ratio": float(height / max(width, 1)),
-                "score": float(score),
-            }
-        )
-
-    return groups
-
-
-def _build_interruption_exclusion_zone(
-    interruption_mask: np.ndarray | None,
-    shape: Tuple[int, int],
-) -> np.ndarray:
-    if not EXCLUDE_NODULES_ON_INTERRUPTION_ZONES:
-        return np.zeros(shape, dtype=np.uint8)
-
-    if interruption_mask is None:
-        return np.zeros(shape, dtype=np.uint8)
-
-    interruption = _as_binary_mask(interruption_mask, shape)
-    if np.count_nonzero(interruption > 0) == 0:
-        return np.zeros(shape, dtype=np.uint8)
-
-    exclusion = _dilate(interruption, INTERRUPTION_EXCLUDE_DILATE_PX)
-    exclusion[exclusion > 0] = 255
-    return exclusion
-
-
-def _filter_groups(
-    groups: List[Dict[str, object]],
-    stage: int,
-    shape: Tuple[int, int],
-    interruption_exclusion_mask: np.ndarray | None = None,
-) -> Tuple[np.ndarray, List[Dict[str, object]], np.ndarray]:
-    result = np.zeros(shape, dtype=np.uint8)
-    rejected = np.zeros(shape, dtype=np.uint8)
-    accepted_infos: List[Dict[str, object]] = []
-
-    if interruption_exclusion_mask is None:
-        interruption_exclusion = np.zeros(shape, dtype=np.uint8)
-    else:
-        interruption_exclusion = _as_binary_mask(interruption_exclusion_mask, shape)
-
-    for group in groups:
-        group_mask = _as_binary_mask(group["mask"], shape)
-        accepted = True
-        reason = "accepted"
-
-        if stage >= 3:
-            if int(group["width"]) < MIN_NODULE_WIDTH_PX:
-                accepted = False
-                reason = "stage3_width_too_small"
-            elif int(group["height"]) < MIN_NODULE_HEIGHT_PX:
-                accepted = False
-                reason = "stage3_height_too_small"
-            elif int(group["area"]) < MIN_NODULE_AREA_PX:
-                accepted = False
-                reason = "stage3_area_too_small"
-            elif int(group["bbox_area"]) < MIN_NODULE_BBOX_AREA_PX:
-                accepted = False
-                reason = "stage3_bbox_too_small"
-            elif int(group["active_columns"]) < MIN_NODULE_ACTIVE_COLUMNS:
-                accepted = False
-                reason = "stage3_too_few_columns"
-            elif (
-                float(group["mean_thickness_prominence"])
-                < MIN_NODULE_MEAN_THICKNESS_PROMINENCE_PX
-            ):
-                accepted = False
-                reason = "stage3_mean_thickness_prominence_too_small"
-            elif (
-                float(group["max_thickness_prominence"])
-                < MIN_NODULE_MAX_THICKNESS_PROMINENCE_PX
-            ):
-                accepted = False
-                reason = "stage3_max_thickness_prominence_too_small"
-            elif (
-                float(group["max_bottom_prominence"])
-                < MIN_NODULE_MAX_BOTTOM_PROMINENCE_PX
-            ):
-                accepted = False
-                reason = "stage3_bottom_prominence_too_small"
-
-        if accepted and stage >= 4:
-            if int(group["width"]) > MAX_NODULE_WIDTH_PX:
-                accepted = False
-                reason = "stage4_width_too_large"
-            elif int(group["height"]) > MAX_NODULE_HEIGHT_PX:
-                accepted = False
-                reason = "stage4_height_too_large"
-            elif int(group["area"]) > MAX_NODULE_AREA_PX:
-                accepted = False
-                reason = "stage4_area_too_large"
-            elif int(group["bbox_area"]) > MAX_NODULE_BBOX_AREA_PX:
-                accepted = False
-                reason = "stage4_bbox_too_large"
-
-        if accepted and stage >= 5:
-            if int(group["width"]) < FINAL_MIN_WIDTH_PX:
-                accepted = False
-                reason = "stage5_final_width_too_small"
-            elif int(group["height"]) < FINAL_MIN_HEIGHT_PX:
-                accepted = False
-                reason = "stage5_final_height_too_small"
-            elif int(group["bbox_area"]) < FINAL_MIN_BBOX_AREA_PX:
-                accepted = False
-                reason = "stage5_final_bbox_too_small"
-            elif float(group["score"]) < FINAL_MIN_SCORE:
-                accepted = False
-                reason = "stage5_score_too_small"
-
-        if accepted and stage >= 5 and EXCLUDE_NODULES_ON_INTERRUPTION_ZONES:
-            x1 = max(0, int(group["x_min"]))
-            y1 = max(0, int(group["y_min"]))
-            x2 = min(shape[1] - 1, int(group["x_max"]))
-            y2 = min(shape[0] - 1, int(group["y_max"]))
-
-            if x2 >= x1 and y2 >= y1:
-                overlap_pixels = int(
-                    np.count_nonzero(
-                        interruption_exclusion[y1 : y2 + 1, x1 : x2 + 1] > 0
-                    )
-                )
-            else:
-                overlap_pixels = 0
-
-            if overlap_pixels >= INTERRUPTION_EXCLUDE_MIN_OVERLAP_PX:
-                accepted = False
-                reason = "stage5_on_interruption_zone"
-
-        if not accepted:
-            rejected[group_mask > 0] = 255
-            continue
-
-        result[group_mask > 0] = 255
-        info = dict(group)
-        info.pop("mask", None)
-        info["reason"] = reason
-        accepted_infos.append(info)
-
-    return result, accepted_infos, rejected
-
-
-def _build_box_mask_from_infos(
-    shape: Tuple[int, int],
-    infos: List[Dict[str, object]],
-    pad: int = 2,
-) -> np.ndarray:
-    height, width = shape[:2]
-    box_mask = np.zeros((height, width), dtype=np.uint8)
-
-    for info in infos:
-        x1 = max(0, int(info["x_min"]) - pad)
-        y1 = max(0, int(info["y_min"]) - pad)
-        x2 = min(width - 1, int(info["x_max"]) + pad)
-        y2 = min(height - 1, int(info["y_max"]) + pad)
-        cv2.rectangle(box_mask, (x1, y1), (x2, y2), 255, thickness=-1)
-
-    return box_mask
 
 
 def _draw_contours(
     base_image: np.ndarray,
     mask: np.ndarray,
-    color,
+    color: Tuple[int, int, int],
     thickness: int = 1,
 ) -> np.ndarray:
     result = _to_bgr(base_image)
     binary = _as_binary_mask(mask, result.shape[:2])
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        binary,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
 
     if len(contours) == 0:
         return result
 
-    cv2.drawContours(result, contours, -1, color, thickness, cv2.LINE_AA)
-    return result
-
-
-def _draw_boxes_from_infos(
-    base_image: np.ndarray,
-    infos: List[Dict[str, object]],
-    color=COLOR_BOX,
-    thickness: int = 2,
-    pad: int = 2,
-) -> np.ndarray:
-    result = _to_bgr(base_image)
-    height, width = result.shape[:2]
-
-    for index, info in enumerate(infos, start=1):
-        x1 = max(0, int(info["x_min"]) - pad)
-        y1 = max(0, int(info["y_min"]) - pad)
-        x2 = min(width - 1, int(info["x_max"]) + pad)
-        y2 = min(height - 1, int(info["y_max"]) + pad)
-
-        cv2.rectangle(result, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
-        cv2.putText(
-            result,
-            f"N{index}",
-            (x1, max(16, y1 - 5)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
-
-    return result
-
-
-def _draw_profile(
-    base_image: np.ndarray,
-    profile: Dict[str, object] | None,
-) -> np.ndarray:
-    result = _to_bgr(base_image)
-
-    if profile is None or "bottom_y" not in profile:
-        return result
-
-    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
-    valid = np.asarray(profile["valid"], dtype=bool)
-    h, w = result.shape[:2]
-
-    points: List[Tuple[int, int]] = []
-
-    for x in range(w):
-        if x >= len(valid) or not bool(valid[x]):
-            continue
-        y = int(round(float(bottom_y[x])))
-        if 0 <= y < h:
-            points.append((x, y))
-
-    if len(points) >= 2:
-        pts = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
-        cv2.polylines(result, [pts], False, COLOR_PROFILE, 1, cv2.LINE_AA)
+    cv2.drawContours(
+        result,
+        contours,
+        contourIdx=-1,
+        color=color,
+        thickness=thickness,
+        lineType=cv2.LINE_AA,
+    )
 
     return result
 
@@ -696,7 +224,7 @@ def _put_title(image: np.ndarray, title_text: str) -> np.ndarray:
         (12, 24),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.44,
-        (255, 255, 255),
+        COLOR_TEXT,
         2,
         cv2.LINE_AA,
     )
@@ -706,7 +234,7 @@ def _put_title(image: np.ndarray, title_text: str) -> np.ndarray:
         (12, 24),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.44,
-        (0, 0, 0),
+        COLOR_TEXT_SHADOW,
         1,
         cv2.LINE_AA,
     )
@@ -714,27 +242,895 @@ def _put_title(image: np.ndarray, title_text: str) -> np.ndarray:
     return result
 
 
+def _build_component_infos(mask: np.ndarray) -> List[Dict[str, object]]:
+    binary = _as_binary_mask(mask)
+    infos: List[Dict[str, object]] = []
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        component = labels == label
+        average_width = _compute_component_average_row_width(component)
+
+        infos.append(
+            {
+                "index": int(len(infos) + 1),
+                "x_min": x,
+                "x_max": int(x + w - 1),
+                "y_min": y,
+                "y_max": int(y + h - 1),
+                "width": w,
+                "height": h,
+                "area": area,
+                "average_width": round(float(average_width), 2),
+                "filter_stage": int(FILTER_STAGE),
+                "reason": "top2_bridge_broken_no_islands_min_max_avg_width_no_interruption_with_pleural_thickening_component",
+            }
+        )
+
+    return infos
+
+
+def _build_pleura_bottom_profile(pleura_mask: np.ndarray) -> Dict[str, object]:
+    """Calculeaza bottom_y[x] pentru pleura.
+
+    Pentru coloanele fara pleura, bottom_y este interpolat intre coloanele valide,
+    dar pastram si vectorul valid ca sa stim unde pleura exista real.
+    """
+    pleura = _as_binary_mask(pleura_mask)
+    _height, width = pleura.shape[:2]
+
+    bottom_raw = np.full(width, np.nan, dtype=np.float32)
+    valid = np.zeros(width, dtype=bool)
+
+    for x in range(width):
+        ys = np.flatnonzero(pleura[:, x] > 0)
+        if len(ys) == 0:
+            continue
+        bottom_raw[x] = float(ys[-1])
+        valid[x] = True
+
+    if np.count_nonzero(valid) == 0:
+        return {
+            "valid": valid,
+            "bottom_y": np.zeros(width, dtype=np.float32),
+            "x_min": 0,
+            "x_max": -1,
+        }
+
+    xs_all = np.arange(width, dtype=np.float32)
+    xs_valid = xs_all[valid]
+    bottom_valid = bottom_raw[valid]
+    bottom_interp = np.interp(xs_all, xs_valid, bottom_valid).astype(np.float32)
+
+    return {
+        "valid": valid,
+        "bottom_y": bottom_interp,
+        "x_min": int(xs_valid[0]),
+        "x_max": int(xs_valid[-1]),
+    }
+
+
+def _remove_common_with_pleura(
+    top3_mask: np.ndarray,
+    pleura_mask: np.ndarray,
+    dilate_px: int = COMMON_PLEURA_DILATE_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sterge din masca candidat partea comuna cu pleura deja detectata.
+
+    common_mask = candidat ∩ pleura_detectata.
+    Daca dilate_px > 0, se sterge si o mica zona din jurul pleurei, dar implicit
+    dilate_px = 0 pentru ca aici vrem strict partea comuna.
+    """
+    top3 = _as_binary_mask(top3_mask, pleura_mask.shape[:2])
+    pleura = _as_binary_mask(pleura_mask, top3.shape[:2])
+
+    if not REMOVE_COMMON_WITH_DETECTED_PLEURA:
+        empty = np.zeros_like(top3, dtype=np.uint8)
+        return top3.copy(), empty
+
+    pleura_zone = pleura.copy()
+    if dilate_px > 0 and np.count_nonzero(pleura_zone > 0) > 0:
+        size = 2 * int(dilate_px) + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+        pleura_zone = cv2.dilate(pleura_zone, kernel, iterations=1)
+        pleura_zone[pleura_zone > 0] = 255
+
+    common = np.zeros_like(top3, dtype=np.uint8)
+    common[(top3 > 0) & (pleura_zone > 0)] = 255
+
+    cleaned = top3.copy()
+    cleaned[pleura_zone > 0] = 0
+    cleaned[cleaned > 0] = 255
+
+    return cleaned, common
+
+
+def _build_under_pleura_mask(
+    top3_mask: np.ndarray,
+    pleura_mask: np.ndarray,
+    start_offset_px: int = UNDER_PLEURA_START_OFFSET_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Pastreaza din masca candidat doar pixelii aflati sub marginea inferioara a pleurei.
+
+    under_mask[x, y] = candidat[x, y] daca y >= bottom_y[x] + start_offset_px.
+    Nu aplica alte filtre.
+    """
+    top3 = _as_binary_mask(top3_mask, pleura_mask.shape[:2])
+    profile = _build_pleura_bottom_profile(pleura_mask)
+    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
+    valid = np.asarray(profile["valid"], dtype=bool)
+
+    height, width = top3.shape[:2]
+    under = np.zeros_like(top3, dtype=np.uint8)
+    search_band = np.zeros_like(top3, dtype=np.uint8)
+
+    for x in range(width):
+        if not bool(valid[x]):
+            continue
+
+        y_start = int(round(float(bottom_y[x]))) + int(start_offset_px)
+        y_start = max(0, min(height - 1, y_start))
+
+        search_band[y_start:height, x] = 255
+        under[y_start:height, x] = top3[y_start:height, x]
+
+    under[under > 0] = 255
+    return under, search_band
+
+
+def _build_contact_band_under_pleura(
+    shape: Tuple[int, int],
+    pleura_mask: np.ndarray,
+    start_offset_px: int = UNDER_PLEURA_START_OFFSET_PX,
+    max_gap_px: int = CONTACT_WITH_PLEURA_MAX_GAP_PX,
+) -> np.ndarray:
+    """Construieste banda de contact imediat sub pleura.
+
+    O componenta candidat de sub pleura este pastrata doar daca intersecteaza
+    aceasta banda. Astfel eliminam insulele care plutesc mai jos si nu pornesc
+    din zona pleurala.
+    """
+    height, width = shape[:2]
+    profile = _build_pleura_bottom_profile(pleura_mask)
+    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
+    valid = np.asarray(profile["valid"], dtype=bool)
+
+    band = np.zeros((height, width), dtype=np.uint8)
+
+    for x in range(width):
+        if not bool(valid[x]):
+            continue
+
+        y1 = int(round(float(bottom_y[x]))) + int(start_offset_px)
+        y2 = int(round(float(bottom_y[x]))) + int(max_gap_px)
+        y1 = max(0, min(height - 1, y1))
+        y2 = max(0, min(height - 1, y2))
+
+        if y2 >= y1:
+            band[y1 : y2 + 1, x] = 255
+
+    return band
+
+
+def _remove_island_components(
+    under_mask: np.ndarray,
+    contact_band: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Elimina componentele insulare din masca candidat sub pleura.
+
+    Pastram o componenta doar daca are cel putin un pixel in banda de contact
+    de sub pleura. Componentele complet separate, aflate mai jos, sunt mutate
+    in removed_mask.
+    """
+    under = _as_binary_mask(under_mask)
+    contact = _as_binary_mask(contact_band, under.shape[:2])
+
+    kept = np.zeros_like(under, dtype=np.uint8)
+    removed = np.zeros_like(under, dtype=np.uint8)
+
+    if np.count_nonzero(under > 0) == 0:
+        return kept, removed
+
+    num_labels, labels, _stats, _ = cv2.connectedComponentsWithStats(
+        under,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+        if np.count_nonzero(component) == 0:
+            continue
+
+        touches_contact = np.count_nonzero(component & (contact > 0)) > 0
+
+        if touches_contact:
+            kept[component] = 255
+        else:
+            removed[component] = 255
+
+    return kept, removed
+
+
+def _peel_top_rows_from_components(
+    mask: np.ndarray,
+    rows_to_remove: int = TOP_PEEL_ROWS_FROM_COMPONENTS_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sterge primele randuri/pixeli de sus din fiecare componenta.
+
+    Nu stergem un dreptunghi global, ci facem un "peel" pe fiecare coloana
+    a fiecarei componente: pentru fiecare coloana ocupata de componenta, se
+    elimina primii N pixeli foreground vazuti de sus in jos.
+
+    Motivul este practic: daca mai multe coborari sunt unite printr-o banda
+    subtire de sus, eliminarea primilor 1-2 pixeli poate rupe puntea si poate
+    transforma o componenta mare in mai multe componente separate.
+    """
+    binary = _as_binary_mask(mask)
+
+    if rows_to_remove <= 0 or np.count_nonzero(binary > 0) == 0:
+        return binary.copy(), np.zeros_like(binary, dtype=np.uint8)
+
+    peeled = binary.copy()
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    num_labels, labels, _stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+        ys, xs = np.where(component)
+
+        if len(xs) == 0:
+            continue
+
+        for x in np.unique(xs):
+            col_ys = ys[xs == x]
+            if len(col_ys) == 0:
+                continue
+
+            col_ys_sorted = np.sort(col_ys)
+            remove_count = min(int(rows_to_remove), len(col_ys_sorted))
+            remove_ys = col_ys_sorted[:remove_count]
+
+            peeled[remove_ys, x] = 0
+            removed[remove_ys, x] = 255
+
+    peeled[peeled > 0] = 255
+    return peeled, removed
+
+
+def _break_thin_bridges_by_vertical_thickness(
+    mask: np.ndarray,
+    min_vertical_thickness_px: int = THIN_BRIDGE_MIN_VERTICAL_THICKNESS_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sparge bridge-urile subtiri dintre componente.
+
+    Criteriul este simplu si controlabil:
+      - pentru fiecare coloana x, cautam segmente verticale continue de pixeli;
+      - daca un segment are grosimea verticala < min_vertical_thickness_px,
+        il stergem;
+      - astfel, puntile orizontale subtiri se rup, iar turturii verticali,
+        care au inaltime mai mare, raman.
+
+    Cu min_vertical_thickness_px = 5:
+      - segmentele cu grosime 1, 2, 3 sau 4 px sunt sterse;
+      - segmentele cu grosime 5 px sau mai mult sunt pastrate.
+    """
+    binary = _as_binary_mask(mask)
+    kept = binary.copy()
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    if (
+        not BREAK_THIN_BRIDGES
+        or min_vertical_thickness_px <= 1
+        or np.count_nonzero(binary > 0) == 0
+    ):
+        return kept, removed
+
+    height, width = binary.shape[:2]
+
+    for x in range(width):
+        ys = np.flatnonzero(binary[:, x] > 0)
+        if len(ys) == 0:
+            continue
+
+        run_start = int(ys[0])
+        prev_y = int(ys[0])
+
+        for y_value in ys[1:]:
+            y = int(y_value)
+            if y == prev_y + 1:
+                prev_y = y
+                continue
+
+            run_end = prev_y
+            run_len = run_end - run_start + 1
+            if run_len < int(min_vertical_thickness_px):
+                kept[run_start : run_end + 1, x] = 0
+                removed[run_start : run_end + 1, x] = 255
+
+            run_start = y
+            prev_y = y
+
+        run_end = prev_y
+        run_len = run_end - run_start + 1
+        if run_len < int(min_vertical_thickness_px):
+            kept[run_start : run_end + 1, x] = 0
+            removed[run_start : run_end + 1, x] = 255
+
+    kept[kept > 0] = 255
+    return kept, removed
+
+
+def _filter_components_by_min_size(
+    mask: np.ndarray,
+    min_area_px: int = MIN_COMPONENT_AREA_PX,
+    min_width_px: int = MIN_COMPONENT_WIDTH_PX,
+    min_height_px: int = MIN_COMPONENT_HEIGHT_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Pastreaza doar componentele care trec filtrul de marime minima.
+
+    Filtrul este intentionat simplu si separat de filtrul de marime maxima,
+    pe care il vom adauga ulterior. Momentan eliminam doar fragmentele foarte
+    mici care nu ne intereseaza.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    if not FILTER_MIN_COMPONENT_SIZE or np.count_nonzero(binary > 0) == 0:
+        return binary.copy(), removed
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        is_valid = True
+        if area < int(min_area_px):
+            is_valid = False
+        elif width < int(min_width_px):
+            is_valid = False
+        elif height < int(min_height_px):
+            is_valid = False
+
+        if is_valid:
+            kept[component] = 255
+        else:
+            removed[component] = 255
+
+    return kept, removed
+
+
+def _filter_components_by_max_size(
+    mask: np.ndarray,
+    max_area_px: int = MAX_COMPONENT_AREA_PX,
+    max_width_px: int = MAX_COMPONENT_WIDTH_PX,
+    max_height_px: int = MAX_COMPONENT_HEIGHT_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Elimina componentele care depasesc filtrul de marime maxima.
+
+    Componenta este pastrata doar daca respecta toate limitele maxime active:
+      - area <= MAX_COMPONENT_AREA_PX;
+      - width <= MAX_COMPONENT_WIDTH_PX;
+      - height <= MAX_COMPONENT_HEIGHT_PX.
+
+    O limita pusa pe 0 este ignorata, ca sa poti dezactiva separat aria,
+    latimea sau inaltimea maxima.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    if not FILTER_MAX_COMPONENT_SIZE or np.count_nonzero(binary > 0) == 0:
+        return binary.copy(), removed
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        is_valid = True
+        if int(max_area_px) > 0 and area > int(max_area_px):
+            is_valid = False
+        elif int(max_width_px) > 0 and width > int(max_width_px):
+            is_valid = False
+        elif int(max_height_px) > 0 and height > int(max_height_px):
+            is_valid = False
+
+        if is_valid:
+            kept[component] = 255
+        else:
+            removed[component] = 255
+
+    return kept, removed
+
+
+def _compute_component_average_row_width(component: np.ndarray) -> float:
+    """Calculeaza latimea medie reala a unei componente.
+
+    Pentru fiecare rand y pe care apare componenta, numaram cati pixeli are
+    componenta pe acel rand. Media acestor valori reprezinta latimea medie.
+
+    Exemplu:
+      - un turture vertical subtire are, de obicei, latime medie mica;
+      - un artefact/bloc lat are latime medie mare, chiar daca inaltimea e mare.
+    """
+    ys = np.flatnonzero(np.any(component, axis=1))
+    if ys.size == 0:
+        return 0.0
+
+    row_widths = []
+    for y in ys:
+        row_widths.append(float(np.count_nonzero(component[int(y), :])))
+
+    if len(row_widths) == 0:
+        return 0.0
+
+    return float(np.mean(np.asarray(row_widths, dtype=np.float32)))
+
+
+def _filter_components_by_average_turture_width(
+    mask: np.ndarray,
+    min_average_width_px: float = MIN_AVERAGE_TURTURE_WIDTH_PX,
+    max_average_width_px: float = MAX_AVERAGE_TURTURE_WIDTH_PX,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Filtreaza componentele dupa latimea medie a turturelui.
+
+    Spre deosebire de bounding-box width, latimea medie se calculeaza din forma
+    reala a componentei. Pentru fiecare rand ocupat de componenta, se numara
+    pixelii foreground, apoi se face media.
+
+    Componenta ramane daca respecta limitele active:
+      - average_width >= MIN_AVERAGE_TURTURE_WIDTH_PX, daca minimul > 0;
+      - average_width <= MAX_AVERAGE_TURTURE_WIDTH_PX, daca maximul > 0.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    if not FILTER_BY_AVERAGE_TURTURE_WIDTH or np.count_nonzero(binary > 0) == 0:
+        return binary.copy(), removed
+
+    num_labels, labels, _stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+        average_width = _compute_component_average_row_width(component)
+
+        is_valid = True
+        if float(min_average_width_px) > 0 and average_width < float(
+            min_average_width_px
+        ):
+            is_valid = False
+        elif float(max_average_width_px) > 0 and average_width > float(
+            max_average_width_px
+        ):
+            is_valid = False
+
+        if is_valid:
+            kept[component] = 255
+        else:
+            removed[component] = 255
+
+    return kept, removed
+
+
+def _filter_components_by_top2_turture_confirmation(
+    mask: np.ndarray,
+    top2_support_mask: np.ndarray | None,
+    x_padding_px: int = TOP2_CONFIRM_X_PADDING_PX,
+    y_padding_px: int = TOP2_CONFIRM_Y_PADDING_PX,
+    min_overlap_px: int = TOP2_CONFIRM_MIN_OVERLAP_PX,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pastreaza doar componentele TOP3 care apar si in TOP2.
+
+    Logica:
+      - componenta candidat este extrasa din TOP3;
+      - construim o zona de verificare in jurul bounding-box-ului componentei;
+      - daca in acea zona exista pixeli TOP2, consideram ca turturele are suport
+        si in TOP2;
+      - daca nu exista suport TOP2, componenta este eliminata.
+
+    top2_support_mask trebuie sa fie deja curatat ca masca de sub pleura, ca sa
+    nu confundam banda pleurala cu turturele.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+    support_zone_mask = np.zeros_like(binary, dtype=np.uint8)
+
+    if not FILTER_BY_TOP2_TURTURE_CONFIRMATION or np.count_nonzero(binary > 0) == 0:
+        return binary.copy(), removed, support_zone_mask
+
+    if top2_support_mask is None:
+        # Daca TOP2 nu este disponibil, nu stergem agresiv componentele.
+        return binary.copy(), removed, support_zone_mask
+
+    top2_support = _as_binary_mask(top2_support_mask, binary.shape[:2])
+
+    height, width = binary.shape[:2]
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+
+        x1 = max(0, x - int(x_padding_px))
+        x2 = min(width - 1, x + w - 1 + int(x_padding_px))
+        y1 = max(0, y - int(y_padding_px))
+        y2 = min(height - 1, y + h - 1 + int(y_padding_px))
+
+        zone = top2_support[y1 : y2 + 1, x1 : x2 + 1] > 0
+        overlap_px = int(np.count_nonzero(zone))
+
+        if overlap_px >= int(min_overlap_px):
+            kept[component] = 255
+            support_zone_mask[y1 : y2 + 1, x1 : x2 + 1] = np.where(
+                zone,
+                255,
+                support_zone_mask[y1 : y2 + 1, x1 : x2 + 1],
+            ).astype(np.uint8)
+        else:
+            removed[component] = 255
+
+    return kept, removed, support_zone_mask
+
+
+def _filter_components_above_interruption(
+    mask: np.ndarray,
+    interruption_mask: np.ndarray | None,
+    x_padding_px: int = INTERRUPTION_X_PADDING_PX,
+    vertical_tolerance_px: int = INTERRUPTION_ABOVE_VERTICAL_TOLERANCE_PX,
+    min_overlap_columns_px: int = INTERRUPTION_MIN_OVERLAP_COLUMNS_PX,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Elimina componentele care au deasupra o intrerupere pleurala.
+
+    Regula medicala folosita aici este simpla:
+      - unde pleura este intrerupta, nu clasificam structura de sub acea zona ca nodul;
+      - pentru fiecare componenta candidat, luam intervalul ei pe X, extins putin;
+      - cautam pixeli din interruption_mask deasupra componentei;
+      - daca intreruperea se suprapune pe X cu componenta, componenta este eliminata.
+
+    vertical_tolerance_px permite ca intreruperea sa fie foarte aproape de partea
+    de sus a componentei, nu doar strict deasupra y_min.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+    interruption_above_zone = np.zeros_like(binary, dtype=np.uint8)
+
+    if (
+        not FILTER_COMPONENTS_ABOVE_INTERRUPTION
+        or interruption_mask is None
+        or np.count_nonzero(binary > 0) == 0
+    ):
+        return binary.copy(), removed, interruption_above_zone
+
+    interruption = _as_binary_mask(interruption_mask, binary.shape[:2])
+    if np.count_nonzero(interruption > 0) == 0:
+        return binary.copy(), removed, interruption_above_zone
+
+    height, width = binary.shape[:2]
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+
+        x1 = max(0, x - int(x_padding_px))
+        x2 = min(width - 1, x + w - 1 + int(x_padding_px))
+        y2 = min(height - 1, y + int(vertical_tolerance_px))
+
+        if x2 < x1 or y2 < 0:
+            kept[component] = 255
+            continue
+
+        # Zona verificata: toate intreruperile aflate deasupra componentei
+        # sau foarte aproape de partea ei superioara.
+        zone = interruption[0 : y2 + 1, x1 : x2 + 1] > 0
+        if np.count_nonzero(zone) == 0:
+            kept[component] = 255
+            continue
+
+        overlap_by_column = np.any(zone, axis=0)
+        overlap_columns = int(np.count_nonzero(overlap_by_column))
+
+        if overlap_columns >= int(min_overlap_columns_px):
+            removed[component] = 255
+            interruption_above_zone[0 : y2 + 1, x1 : x2 + 1] = np.where(
+                zone,
+                255,
+                interruption_above_zone[0 : y2 + 1, x1 : x2 + 1],
+            ).astype(np.uint8)
+        else:
+            kept[component] = 255
+
+    return kept, removed, interruption_above_zone
+
+
+def _choose_pleura_thickening_source(
+    binary_top2: np.ndarray | None,
+    pleura_mask: np.ndarray,
+) -> np.ndarray:
+    """Alege masca folosita pentru masurarea ingrosarii pleurale.
+
+    Preferam binary_top2, fiindca acolo se vede mai bine banda pleurala.
+    Daca binary_top2 lipseste sau este gol, folosim pleura_mask.
+    """
+    pleura = _as_binary_mask(pleura_mask)
+
+    if PLEURA_THICKENING_SOURCE == "binary_top2" and binary_top2 is not None:
+        top2 = _as_binary_mask(binary_top2, pleura.shape[:2])
+        if np.count_nonzero(top2 > 0) > 0:
+            return top2
+
+    return pleura.copy()
+
+
+def _build_pleura_thickness_profile(
+    source_mask: np.ndarray,
+    detected_pleura_mask: np.ndarray,
+    band_up_px: int = PLEURA_THICKENING_BAND_UP_PX,
+    band_down_px: int = PLEURA_THICKENING_BAND_DOWN_PX,
+) -> Dict[str, object]:
+    """Calculeaza un profil 1D al grosimii pleurale pe fiecare coloana.
+
+    Pentru fiecare coloana x:
+      - luam marginea inferioara a pleurei detectate, bottom_y[x];
+      - construim o fereastra verticala [bottom_y - band_up, bottom_y + band_down];
+      - numaram cati pixeli din source_mask exista in acea fereastra.
+
+    Rezultatul thickness[x] poate fi folosit pentru a vedea daca deasupra unei
+    componente candidat exista o ingrosare locala a pleurei.
+    """
+    source = _as_binary_mask(source_mask, detected_pleura_mask.shape[:2])
+    pleura = _as_binary_mask(detected_pleura_mask, source.shape[:2])
+
+    height, width = source.shape[:2]
+    profile = _build_pleura_bottom_profile(pleura)
+    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
+    valid = np.asarray(profile["valid"], dtype=bool)
+
+    thickness = np.zeros(width, dtype=np.float32)
+    band_mask = np.zeros_like(source, dtype=np.uint8)
+    source_in_band = np.zeros_like(source, dtype=np.uint8)
+
+    for x in range(width):
+        if not bool(valid[x]):
+            continue
+
+        y_center = int(round(float(bottom_y[x])))
+        y1 = y_center - int(band_up_px)
+        y2 = y_center + int(band_down_px)
+        y1 = max(0, min(height - 1, y1))
+        y2 = max(0, min(height - 1, y2))
+
+        if y2 < y1:
+            continue
+
+        band_mask[y1 : y2 + 1, x] = 255
+        col = source[y1 : y2 + 1, x] > 0
+        thickness[x] = float(np.count_nonzero(col))
+        source_in_band[y1 : y2 + 1, x] = np.where(col, 255, 0).astype(np.uint8)
+
+    return {
+        "thickness": thickness,
+        "valid": valid,
+        "band_mask": band_mask,
+        "source_in_band": source_in_band,
+    }
+
+
+def _safe_percentile(
+    values: np.ndarray, percentile: float, fallback: float = 0.0
+) -> float:
+    values = np.asarray(values, dtype=np.float32)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return float(fallback)
+    return float(np.percentile(values, percentile))
+
+
+def _filter_components_by_pleura_thickening(
+    mask: np.ndarray,
+    detected_pleura_mask: np.ndarray,
+    pleura_thickening_source_mask: np.ndarray,
+    x_padding_px: int = PLEURA_THICKENING_X_PADDING_PX,
+    side_reference_px: int = PLEURA_THICKENING_REFERENCE_SIDE_PX,
+    local_percentile: float = PLEURA_THICKENING_LOCAL_PERCENTILE,
+    reference_percentile: float = PLEURA_THICKENING_REFERENCE_PERCENTILE,
+    global_fallback_percentile: float = PLEURA_THICKENING_GLOBAL_FALLBACK_PERCENTILE,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Pastreaza doar componentele aflate sub o pleura local ingrosata.
+
+    Varianta adaptiva, fara praguri fixe in pixeli pentru grosime.
+
+    Pentru fiecare componenta ramasa:
+      - luam intervalul ei pe axa X, extins cu x_padding_px;
+      - local_value = percentila local_percentile a grosimii pleurei deasupra ei;
+      - reference_value = percentila reference_percentile a grosimii din stanga/dreapta;
+      - daca nu exista suficienta referinta laterala, folosim o referinta globala
+        calculata din aceeasi pleura.
+
+    Conditia de pastrare este simpla si adaptiva:
+      local_value >= reference_value
+
+    Astfel, un nodul de pe o pleura subtire nu este eliminat doar pentru ca nu
+    atinge un prag absolut fix, de exemplu 3 px.
+    """
+    binary = _as_binary_mask(mask)
+    kept = np.zeros_like(binary, dtype=np.uint8)
+    removed = np.zeros_like(binary, dtype=np.uint8)
+
+    thickness_data = _build_pleura_thickness_profile(
+        pleura_thickening_source_mask,
+        detected_pleura_mask,
+        band_up_px=PLEURA_THICKENING_BAND_UP_PX,
+        band_down_px=PLEURA_THICKENING_BAND_DOWN_PX,
+    )
+    thickness = np.asarray(thickness_data["thickness"], dtype=np.float32)
+    valid = np.asarray(thickness_data["valid"], dtype=bool)
+    band_mask = np.asarray(thickness_data["band_mask"], dtype=np.uint8)
+    source_in_band = np.asarray(thickness_data["source_in_band"], dtype=np.uint8)
+
+    if (
+        not FILTER_BY_PLEURA_THICKENING
+        or np.count_nonzero(binary > 0) == 0
+        or np.count_nonzero(valid) == 0
+    ):
+        return binary.copy(), removed, band_mask, source_in_band
+
+    valid_values = thickness[valid]
+    usable_global_values = valid_values[valid_values > 0]
+    if usable_global_values.size == 0:
+        usable_global_values = valid_values
+
+    global_reference = _safe_percentile(
+        usable_global_values,
+        float(global_fallback_percentile),
+        fallback=0.0,
+    )
+    global_profile_peak = _safe_percentile(usable_global_values, 90, fallback=0.0)
+
+    # Daca masca folosita pentru grosime este practic o linie subtire, nu avem
+    # informatie reala despre ingrosare. In cazul asta nu aplicam filtrul.
+    if global_profile_peak <= float(PLEURA_THICKENING_PROFILE_MIN_USABLE_PX):
+        return binary.copy(), removed, band_mask, source_in_band
+
+    height, width = binary.shape[:2]
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    for label in range(1, num_labels):
+        component = labels == label
+
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        x1 = max(0, x - int(x_padding_px))
+        x2 = min(width - 1, x + w - 1 + int(x_padding_px))
+
+        local_cols = np.arange(x1, x2 + 1)
+        local_cols = local_cols[valid[local_cols]]
+
+        if local_cols.size == 0:
+            # Nu avem informatie de grosime exact deasupra componentei.
+            # Nu o stergem agresiv, ca sa nu pierdem noduli buni din cauza profilului incomplet.
+            kept[component] = 255
+            continue
+
+        local_values = thickness[local_cols]
+        usable_local_values = local_values[local_values > 0]
+        if usable_local_values.size == 0:
+            usable_local_values = local_values
+
+        local_value = _safe_percentile(
+            usable_local_values,
+            float(local_percentile),
+            fallback=0.0,
+        )
+
+        left1 = max(0, x1 - int(side_reference_px))
+        left2 = max(0, x1 - 1)
+        right1 = min(width - 1, x2 + 1)
+        right2 = min(width - 1, x2 + int(side_reference_px))
+
+        reference_values: List[float] = []
+
+        if left2 >= left1:
+            left_cols = np.arange(left1, left2 + 1)
+            left_cols = left_cols[valid[left_cols]]
+            if left_cols.size > 0:
+                vals = thickness[left_cols]
+                vals = vals[vals > 0]
+                reference_values.extend([float(v) for v in vals])
+
+        if right2 >= right1:
+            right_cols = np.arange(right1, right2 + 1)
+            right_cols = right_cols[valid[right_cols]]
+            if right_cols.size > 0:
+                vals = thickness[right_cols]
+                vals = vals[vals > 0]
+                reference_values.extend([float(v) for v in vals])
+
+        if len(reference_values) > 0:
+            reference = _safe_percentile(
+                np.asarray(reference_values, dtype=np.float32),
+                float(reference_percentile),
+                fallback=global_reference,
+            )
+        else:
+            reference = global_reference
+
+        # Conditie adaptiva: nu cerem un prag fix de pixeli.
+        # Componenta este pastrata daca pleura deasupra ei este cel putin la
+        # nivelul referintei locale a aceleiasi pleure.
+        is_valid = bool(local_value >= float(reference))
+
+        if is_valid:
+            kept[component] = 255
+        else:
+            removed[component] = 255
+
+    return kept, removed, band_mask, source_in_band
+
+
+# ============================================================
+# Debug drawing
+# ============================================================
 def draw_nodule_marking(
     base_bgr: np.ndarray,
     pleura_mask: np.ndarray,
     nodule_mask: np.ndarray,
-    profile: Dict[str, object] | None = None,
     title_text: str | None = None,
-    nodule_infos: List[Dict[str, object]] | None = None,
 ) -> np.ndarray:
     result = _to_bgr(base_bgr)
-    result = _draw_contours(result, pleura_mask, COLOR_FINAL_CONTOUR, thickness=1)
-    result = _draw_contours(result, nodule_mask, COLOR_NODULE, thickness=1)
-
-    if nodule_infos:
-        result = _draw_boxes_from_infos(
-            result, nodule_infos, color=COLOR_BOX, thickness=2, pad=2
-        )
-
-    result = _draw_profile(result, profile)
+    result = _draw_contours(result, pleura_mask, COLOR_PLEURA, thickness=1)
+    result = _draw_contours(result, nodule_mask, COLOR_CANDIDATE, thickness=1)
 
     if title_text is None:
-        title_text = "NODULI = ingrosare locala a pleurei | dreptunghi=candidat"
+        title_text = "TOP3 SUB PLEURA | verde=pleura | rosu=noduli candidati"
 
     return _put_title(result, title_text)
 
@@ -742,53 +1138,22 @@ def draw_nodule_marking(
 def draw_nodule_candidate_debug(
     base_bgr: np.ndarray,
     pleura_mask: np.ndarray,
-    search_band_mask: np.ndarray,
-    working_mask: np.ndarray,
-    candidate_mask: np.ndarray,
-    rejected_mask: np.ndarray,
-    nodule_mask: np.ndarray,
-    profile: Dict[str, object] | None = None,
+    top3_mask: np.ndarray,
     title_text: str | None = None,
-    nodule_infos: List[Dict[str, object]] | None = None,
 ) -> np.ndarray:
     result = _to_bgr(base_bgr)
-
-    result = _draw_contours(result, search_band_mask, COLOR_SEARCH_BAND, thickness=1)
-    result = _draw_contours(result, working_mask, COLOR_CANDIDATE, thickness=1)
-    result = _draw_contours(result, candidate_mask, COLOR_CANDIDATE, thickness=1)
-    result = _draw_contours(result, rejected_mask, COLOR_REJECTED, thickness=1)
-    result = _draw_contours(result, nodule_mask, COLOR_NODULE, thickness=2)
-
-    if nodule_infos:
-        result = _draw_boxes_from_infos(
-            result, nodule_infos, color=COLOR_BOX, thickness=2, pad=2
-        )
-
-    result = _draw_contours(result, pleura_mask, COLOR_FINAL_CONTOUR, thickness=1)
-    result = _draw_profile(result, profile)
+    result = _draw_contours(result, top3_mask, COLOR_CANDIDATE, thickness=1)
+    result = _draw_contours(result, pleura_mask, COLOR_PLEURA, thickness=1)
 
     if title_text is None:
-        title_text = "DEBUG NODULI | galben=candidat | portocaliu=respins | cyan=final"
+        title_text = "DEBUG TOP3 CANDIDATI | rosu=TOP3 pastrat"
 
     return _put_title(result, title_text)
 
 
-def _empty_result(
-    base: np.ndarray,
-    pleura: np.ndarray,
-    profile: Dict[str, object],
-) -> Dict[str, object]:
+def _empty_result(base: np.ndarray, pleura: np.ndarray) -> Dict[str, object]:
     empty = np.zeros_like(pleura, dtype=np.uint8)
-    debug = draw_nodule_candidate_debug(
-        base,
-        pleura,
-        empty,
-        empty,
-        empty,
-        empty,
-        empty,
-        profile,
-    )
+    debug = draw_nodule_candidate_debug(base, pleura, empty)
 
     result: Dict[str, object] = {
         "nodule_mask": empty,
@@ -803,14 +1168,24 @@ def _empty_result(
         "search_band_mask": empty,
         "contact_zone_mask": empty,
         "interruption_exclusion_mask": empty,
-        "nodule_image": draw_nodule_marking(base, pleura, empty, profile),
+        "nodule_image": draw_nodule_marking(base, pleura, empty),
         "candidate_debug_image": debug,
         "nodule_infos": [],
         "nodule_count": 0,
-        "stage5_removed_small_mask": empty,
+        "stage4_removed_thin_bridge_mask": empty.copy(),
+        "stage5_removed_small_mask": empty.copy(),
+        "stage5_removed_large_mask": empty.copy(),
+        "stage5_removed_bad_average_width_mask": empty.copy(),
+        "stage5_removed_no_top2_support_mask": empty.copy(),
+        "stage5_removed_above_interruption_mask": empty.copy(),
+        "stage5_removed_no_thickening_mask": empty.copy(),
+        "interruption_above_zone_mask": empty.copy(),
+        "top2_turture_support_zone_mask": empty.copy(),
+        "pleura_thickening_band_mask": empty.copy(),
+        "pleura_thickening_source_in_band_mask": empty.copy(),
     }
 
-    for stage in range(0, max(0, min(int(FILTER_STAGE), 5)) + 1):
+    for stage in range(0, 6):
         result[f"stage{stage}_mask"] = empty.copy()
         result[f"stage{stage}_rejected_mask"] = empty.copy()
         result[f"stage{stage}_debug_image"] = debug.copy()
@@ -818,6 +1193,9 @@ def _empty_result(
     return result
 
 
+# ============================================================
+# Main API - compatibil cu main.py
+# ============================================================
 def detect_pleural_nodules(
     base_bgr: np.ndarray,
     pleura_mask: np.ndarray,
@@ -825,72 +1203,162 @@ def detect_pleural_nodules(
     interruption_mask: np.ndarray | None = None,
     binary_top3: np.ndarray | None = None,
     binary_top4: np.ndarray | None = None,
+    binary_top2: np.ndarray | None = None,
 ) -> Dict[str, object]:
-    _ = binary_top3
+    _ = bridge_mask
     _ = binary_top4
-
     base = _to_bgr(base_bgr)
     pleura = _as_binary_mask(pleura_mask, base.shape[:2])
-    profile = _build_pleura_profiles(pleura)
 
-    if not NODULE_ENABLE or np.count_nonzero(pleura > 0) == 0:
-        return _empty_result(base, pleura, profile)
-
-    search_band = _build_search_band_from_profile(pleura.shape, profile)
-
-    # Stage 0: pleura finala in zona valida a profilului.
-    stage0_mask = cv2.bitwise_and(pleura, search_band)
-
-    # Stage 1: in varianta asta contactul cu pleura este implicit,
-    # pentru ca sursa este chiar masca pleurei finale.
-    stage1_mask = stage0_mask.copy()
-
-    candidate_columns = _build_candidate_columns(profile)
-
-    # Stage 2: coloane unde pleura este local mai groasa / coboara local.
-    stage2_mask = np.zeros_like(pleura, dtype=np.uint8)
-    height, width = pleura.shape[:2]
-    top_y = np.asarray(profile["top_y"], dtype=np.float32)
-    bottom_y = np.asarray(profile["bottom_y"], dtype=np.float32)
-
-    for x in np.flatnonzero(candidate_columns):
-        if x < 0 or x >= width:
-            continue
-        y1 = max(0, int(round(float(top_y[x]))) - GROUP_EXTRA_Y_PAD_PX)
-        y2 = min(height - 1, int(round(float(bottom_y[x]))) + GROUP_EXTRA_Y_PAD_PX)
-        if y2 < y1:
-            continue
-        column = pleura[y1 : y2 + 1, x]
-        stage2_mask[y1 : y2 + 1, x][column > 0] = 255
-
-    groups = _group_local_thickening_regions(pleura, profile, candidate_columns)
-
-    interruption_exclusion = _build_interruption_exclusion_zone(
-        interruption_mask,
-        pleura.shape,
+    # Varianta 80: revenim la TOP3 ca sursa principala de candidati.
+    # TOP2 este folosit separat doar ca masca de confirmare pentru turturi.
+    candidate_source = (
+        binary_top3 if NODULE_CANDIDATE_SOURCE == "binary_top3" else binary_top2
     )
-    excluded = _merge_masks(
-        bridge_mask, interruption_mask, interruption_exclusion, shape=pleura.shape
+    if candidate_source is None and binary_top3 is not None:
+        candidate_source = binary_top3
+
+    if not NODULE_ENABLE or candidate_source is None:
+        return _empty_result(base, pleura)
+
+    top3 = _as_binary_mask(candidate_source, pleura.shape[:2])
+    interruption = _as_binary_mask(interruption_mask, pleura.shape[:2])
+    top3_without_pleura, common_with_pleura = _remove_common_with_pleura(
+        top3,
+        pleura,
+        dilate_px=COMMON_PLEURA_DILATE_PX,
+    )
+    top3_under_pleura, search_band = _build_under_pleura_mask(
+        top3_without_pleura,
+        pleura,
+        start_offset_px=UNDER_PLEURA_START_OFFSET_PX,
     )
 
-    stage3_mask, stage3_infos, stage3_rejected_local = _filter_groups(
-        groups,
-        stage=3,
-        shape=pleura.shape,
+    top2_support_under_pleura = None
+    if binary_top2 is not None:
+        top2_raw = _as_binary_mask(binary_top2, pleura.shape[:2])
+        top2_without_pleura, _common_top2_with_pleura = _remove_common_with_pleura(
+            top2_raw,
+            pleura,
+            dilate_px=COMMON_PLEURA_DILATE_PX,
+        )
+        top2_support_under_pleura, _top2_support_band = _build_under_pleura_mask(
+            top2_without_pleura,
+            pleura,
+            start_offset_px=UNDER_PLEURA_START_OFFSET_PX,
+        )
+
+    contact_band = _build_contact_band_under_pleura(
+        top3.shape[:2],
+        pleura,
+        start_offset_px=UNDER_PLEURA_START_OFFSET_PX,
+        max_gap_px=CONTACT_WITH_PLEURA_MAX_GAP_PX,
     )
-    stage4_mask, stage4_infos, stage4_rejected_local = _filter_groups(
-        groups,
-        stage=4,
-        shape=pleura.shape,
+    # IMPORTANT:
+    # Operatiile care pot sparge o componenta mare in bucati se fac INAINTE
+    # de eliminarea insulelor. Altfel, insulele aparute dupa bridge-breaking
+    # nu mai sunt curatate.
+    top3_top_peeled, removed_top_rows = _peel_top_rows_from_components(
+        top3_under_pleura,
+        rows_to_remove=TOP_PEEL_ROWS_FROM_COMPONENTS_PX,
     )
-    stage5_mask, stage5_infos, stage5_rejected_local = _filter_groups(
-        groups,
-        stage=5,
-        shape=pleura.shape,
-        interruption_exclusion_mask=interruption_exclusion,
+    top3_bridge_broken, removed_thin_bridges = (
+        _break_thin_bridges_by_vertical_thickness(
+            top3_top_peeled,
+            min_vertical_thickness_px=THIN_BRIDGE_MIN_VERTICAL_THICKNESS_PX,
+        )
+    )
+    top3_no_islands, removed_islands = _remove_island_components(
+        top3_bridge_broken,
+        contact_band,
+    )
+    top3_min_size, removed_too_small = _filter_components_by_min_size(
+        top3_no_islands,
+        min_area_px=MIN_COMPONENT_AREA_PX,
+        min_width_px=MIN_COMPONENT_WIDTH_PX,
+        min_height_px=MIN_COMPONENT_HEIGHT_PX,
+    )
+    top3_max_size, removed_too_large = _filter_components_by_max_size(
+        top3_min_size,
+        max_area_px=MAX_COMPONENT_AREA_PX,
+        max_width_px=MAX_COMPONENT_WIDTH_PX,
+        max_height_px=MAX_COMPONENT_HEIGHT_PX,
+    )
+    top3_avg_width, removed_bad_average_width = (
+        _filter_components_by_average_turture_width(
+            top3_max_size,
+            min_average_width_px=MIN_AVERAGE_TURTURE_WIDTH_PX,
+            max_average_width_px=MAX_AVERAGE_TURTURE_WIDTH_PX,
+        )
+    )
+    top3_confirmed_by_top2, removed_no_top2_support, top2_turture_support_zone = (
+        _filter_components_by_top2_turture_confirmation(
+            top3_avg_width,
+            top2_support_mask=top2_support_under_pleura,
+            x_padding_px=TOP2_CONFIRM_X_PADDING_PX,
+            y_padding_px=TOP2_CONFIRM_Y_PADDING_PX,
+            min_overlap_px=TOP2_CONFIRM_MIN_OVERLAP_PX,
+        )
+    )
+    top3_no_interruption, removed_above_interruption, interruption_above_zone = (
+        _filter_components_above_interruption(
+            top3_confirmed_by_top2,
+            interruption_mask=interruption,
+            x_padding_px=INTERRUPTION_X_PADDING_PX,
+            vertical_tolerance_px=INTERRUPTION_ABOVE_VERTICAL_TOLERANCE_PX,
+            min_overlap_columns_px=INTERRUPTION_MIN_OVERLAP_COLUMNS_PX,
+        )
+    )
+    pleura_thickening_source = _choose_pleura_thickening_source(
+        binary_top2,
+        pleura,
+    )
+    (
+        top3_after_thickening,
+        removed_no_thickening,
+        pleura_thickening_band,
+        pleura_source_in_band,
+    ) = _filter_components_by_pleura_thickening(
+        top3_no_interruption,
+        detected_pleura_mask=pleura,
+        pleura_thickening_source_mask=pleura_thickening_source,
+        x_padding_px=PLEURA_THICKENING_X_PADDING_PX,
+        side_reference_px=PLEURA_THICKENING_REFERENCE_SIDE_PX,
+        local_percentile=PLEURA_THICKENING_LOCAL_PERCENTILE,
+        reference_percentile=PLEURA_THICKENING_REFERENCE_PERCENTILE,
+        global_fallback_percentile=PLEURA_THICKENING_GLOBAL_FALLBACK_PERCENTILE,
     )
 
-    stage_masks: Dict[int, np.ndarray] = {
+    # Stage 0 = TOP3 dupa stergerea partii comune cu pleura detectata.
+    # Stage 1 = TOP3 curatat, pastrat doar sub pleura.
+    # Stage 2 = sterge primele randuri/pixeli de sus din fiecare componenta.
+    # Stage 3 = sparge bridge-urile subtiri.
+    # Stage 4 = elimina componentele insulare aparute/ramase dupa spargeri.
+    # Stage 5 = elimina componentele prea mici/prea mari, componentele prea late mediu,
+    # componentele fara suport TOP2, componentele sub intreruperi si cele fara ingrosare pleurala adaptiva.
+    stage0_mask = top3_without_pleura.copy()
+    stage1_mask = top3_under_pleura.copy()
+    stage2_mask = top3_top_peeled.copy()
+    stage3_mask = top3_bridge_broken.copy()
+    stage4_mask = top3_no_islands.copy()
+    stage5_mask = top3_after_thickening.copy()
+
+    empty = np.zeros_like(top3, dtype=np.uint8)
+    removed_total = np.zeros_like(top3, dtype=np.uint8)
+    removed_total[common_with_pleura > 0] = 255
+    removed_total[removed_islands > 0] = 255
+    removed_total[removed_top_rows > 0] = 255
+    removed_total[removed_thin_bridges > 0] = 255
+    removed_total[removed_too_small > 0] = 255
+    removed_total[removed_too_large > 0] = 255
+    removed_total[removed_bad_average_width > 0] = 255
+    removed_total[removed_no_top2_support > 0] = 255
+    removed_total[removed_above_interruption > 0] = 255
+    removed_total[removed_no_thickening > 0] = 255
+
+    nodule_infos = _build_component_infos(stage5_mask)
+
+    stage_masks = {
         0: stage0_mask,
         1: stage1_mask,
         2: stage2_mask,
@@ -899,141 +1367,255 @@ def detect_pleural_nodules(
         5: stage5_mask,
     }
 
-    final_stage = max(0, min(int(FILTER_STAGE), 5))
-    nodule_core_mask = stage_masks[final_stage].copy()
-
-    if final_stage >= 5:
-        selected_infos = stage5_infos
-    elif final_stage >= 4:
-        selected_infos = stage4_infos
-    elif final_stage >= 3:
-        selected_infos = stage3_infos
-    else:
-        selected_infos = []
-
-    nodule_infos: List[Dict[str, object]] = []
-    for index, info in enumerate(selected_infos, start=1):
-        nodule_infos.append(
-            {
-                "index": int(index),
-                "score": float(info.get("score", 0.0)),
-                "area": int(info["area"]),
-                "bbox_area": int(info["bbox_area"]),
-                "width": int(info["width"]),
-                "height": int(info["height"]),
-                "x_min": int(info["x_min"]),
-                "x_max": int(info["x_max"]),
-                "y_min": int(info["y_min"]),
-                "y_max": int(info["y_max"]),
-                "active_columns": int(info["active_columns"]),
-                "max_thickness": float(info.get("max_thickness", 0.0)),
-                "mean_thickness": float(info.get("mean_thickness", 0.0)),
-                "max_thickness_prominence": float(
-                    info.get("max_thickness_prominence", 0.0)
-                ),
-                "mean_thickness_prominence": float(
-                    info.get("mean_thickness_prominence", 0.0)
-                ),
-                "max_bottom_prominence": float(info.get("max_bottom_prominence", 0.0)),
-                "mean_bottom_prominence": float(
-                    info.get("mean_bottom_prominence", 0.0)
-                ),
-                "height_to_width_ratio": float(info.get("height_to_width_ratio", 0.0)),
-                "filter_stage": int(FILTER_STAGE),
-                "reason": str(info.get("reason", "accepted")),
-            }
-        )
-
-    nodule_box_mask = _build_box_mask_from_infos(pleura.shape, nodule_infos, pad=2)
-    nodule_mask = nodule_core_mask.copy()
-
-    candidate_mask = stage2_mask.copy()
-    rejected_mask = np.zeros_like(stage0_mask, dtype=np.uint8)
-    rejected_mask[(stage0_mask > 0) & (nodule_mask == 0)] = 255
-
-    stage_rejected_masks: Dict[int, np.ndarray] = {}
-    for stage, current in stage_masks.items():
-        rejected = np.zeros_like(stage0_mask, dtype=np.uint8)
-        rejected[(stage0_mask > 0) & (current == 0)] = 255
-        stage_rejected_masks[stage] = rejected
-
-    stage5_removed_small_mask = np.zeros_like(stage0_mask, dtype=np.uint8)
-    stage5_removed_small_mask[(stage4_mask > 0) & (stage5_mask == 0)] = 255
-    stage5_removed_small_mask[stage5_rejected_local > 0] = 255
-
     stage_titles = {
-        0: "STAGE 0: pleura finala valida",
-        1: "STAGE 1: contact implicit, sursa este pleura",
-        2: "STAGE 2: coloane cu ingrosare locala",
-        3: "STAGE 3: candidati cu dimensiuni minime",
-        4: "STAGE 4: elimina candidati exagerat de mari",
-        5: "STAGE 5: score final + fara zone cu intreruperi",
-    }
-
-    infos_by_stage = {
-        3: stage3_infos,
-        4: stage4_infos,
-        5: nodule_infos,
+        0: "STAGE 0: TOP3 fara partea comuna cu pleura",
+        1: "STAGE 1: TOP3 fara pleura, doar sub pleura",
+        2: "STAGE 2: sterge primii pixeli de sus din componente",
+        3: f"STAGE 3: sparge bridge-urile subtiri sub {THIN_BRIDGE_MIN_VERTICAL_THICKNESS_PX} px",
+        4: "STAGE 4: elimina insulele dupa spargeri",
+        5: "STAGE 5: final - TOP3 confirmat in TOP2 + fara intreruperi + ingrosare",
     }
 
     stage_debug_images: Dict[int, np.ndarray] = {}
-    for stage, stage_mask in stage_masks.items():
+    for stage, mask in stage_masks.items():
         stage_debug_images[stage] = draw_nodule_candidate_debug(
             base_bgr=base,
             pleura_mask=pleura,
-            search_band_mask=search_band,
-            working_mask=stage0_mask,
-            candidate_mask=candidate_mask,
-            rejected_mask=stage_rejected_masks[stage],
-            nodule_mask=stage_mask,
-            profile=profile,
-            title_text=stage_titles.get(stage, f"STAGE {stage}"),
-            nodule_infos=infos_by_stage.get(stage, None),
+            top3_mask=mask,
+            title_text=stage_titles[stage],
         )
 
     nodule_image = draw_nodule_marking(
         base_bgr=base,
         pleura_mask=pleura,
-        nodule_mask=nodule_mask,
-        profile=profile,
-        nodule_infos=nodule_infos,
+        nodule_mask=stage5_mask,
+        title_text="NODULI CANDIDATI DIN TOP3 CONFIRMATI IN TOP2 | fara intreruperi + ingrosare",
     )
 
     candidate_debug_image = draw_nodule_candidate_debug(
         base_bgr=base,
         pleura_mask=pleura,
-        search_band_mask=search_band,
-        working_mask=stage0_mask,
-        candidate_mask=candidate_mask,
-        rejected_mask=rejected_mask,
-        nodule_mask=nodule_mask,
-        profile=profile,
-        nodule_infos=nodule_infos,
+        top3_mask=top3_without_pleura,
+        title_text="DEBUG TOP3 FARA ZONA COMUNA CU PLEURA",
     )
 
     result: Dict[str, object] = {
-        "nodule_mask": nodule_mask,
-        "nodule_core_mask": nodule_core_mask,
-        "nodule_box_mask": nodule_box_mask,
-        "candidate_mask": candidate_mask,
-        "rejected_mask": rejected_mask,
-        "under_structure_mask": nodule_mask,
-        "under_structure_rejected_mask": rejected_mask,
-        "working_mask": stage0_mask,
-        "excluded_mask": excluded,
+        "nodule_mask": stage5_mask,
+        "nodule_core_mask": stage5_mask,
+        "nodule_box_mask": stage5_mask,
+        "candidate_mask": stage5_mask,
+        "rejected_mask": removed_total,
+        "under_structure_mask": stage5_mask,
+        "under_structure_rejected_mask": removed_total,
+        "working_mask": stage5_mask,
+        "excluded_mask": removed_total,
         "search_band_mask": search_band,
-        "contact_zone_mask": stage1_mask,
-        "interruption_exclusion_mask": interruption_exclusion,
+        "contact_zone_mask": contact_band,
+        "interruption_exclusion_mask": empty,
         "nodule_image": nodule_image,
         "candidate_debug_image": candidate_debug_image,
         "nodule_infos": nodule_infos,
         "nodule_count": len(nodule_infos),
-        "stage5_removed_small_mask": stage5_removed_small_mask,
+        "stage4_removed_thin_bridge_mask": removed_thin_bridges,
+        "stage5_removed_small_mask": removed_too_small,
+        "stage5_removed_large_mask": removed_too_large,
+        "stage5_removed_bad_average_width_mask": removed_bad_average_width,
+        "stage5_removed_no_top2_support_mask": removed_no_top2_support,
+        "stage5_removed_above_interruption_mask": removed_above_interruption,
+        "stage5_removed_no_thickening_mask": removed_no_thickening,
+        "interruption_above_zone_mask": interruption_above_zone,
+        "top2_turture_support_zone_mask": top2_turture_support_zone,
+        "pleura_thickening_band_mask": pleura_thickening_band,
+        "pleura_thickening_source_in_band_mask": pleura_source_in_band,
     }
 
-    for stage, stage_mask in stage_masks.items():
-        result[f"stage{stage}_mask"] = stage_mask
-        result[f"stage{stage}_rejected_mask"] = stage_rejected_masks[stage]
+    for stage, mask in stage_masks.items():
+        result[f"stage{stage}_mask"] = mask
+        if stage == 0:
+            result[f"stage{stage}_rejected_mask"] = common_with_pleura.copy()
+        elif stage == 1:
+            result[f"stage{stage}_rejected_mask"] = common_with_pleura.copy()
+        elif stage == 2:
+            stage2_removed = np.zeros_like(top3, dtype=np.uint8)
+            stage2_removed[common_with_pleura > 0] = 255
+            stage2_removed[removed_top_rows > 0] = 255
+            result[f"stage{stage}_rejected_mask"] = stage2_removed
+        elif stage == 3:
+            stage3_removed = np.zeros_like(top3, dtype=np.uint8)
+            stage3_removed[common_with_pleura > 0] = 255
+            stage3_removed[removed_top_rows > 0] = 255
+            stage3_removed[removed_thin_bridges > 0] = 255
+            result[f"stage{stage}_rejected_mask"] = stage3_removed
+        elif stage == 4:
+            stage4_removed = np.zeros_like(top3, dtype=np.uint8)
+            stage4_removed[common_with_pleura > 0] = 255
+            stage4_removed[removed_top_rows > 0] = 255
+            stage4_removed[removed_thin_bridges > 0] = 255
+            stage4_removed[removed_islands > 0] = 255
+            result[f"stage{stage}_rejected_mask"] = stage4_removed
+        elif stage >= 5:
+            result[f"stage{stage}_rejected_mask"] = removed_total.copy()
+        else:
+            result[f"stage{stage}_rejected_mask"] = empty.copy()
         result[f"stage{stage}_debug_image"] = stage_debug_images[stage]
 
+    result["reject_table"] = _build_reject_table_from_infos(nodule_infos)
+
     return result
+
+
+# ============================================================
+# CSV DEBUG API - compatibil cu main.py
+# ============================================================
+# main.py importa save_debug si append_reject_summary. In varianta asta
+# curata nu exista selectie de noduli, deci CSV-ul noteaza doar componentele
+# ramase dupa filtre, ca sa nu crape pipeline-ul.
+# ============================================================
+
+REJECT_CSV_COLUMNS = [
+    "zone_id",
+    "x_start",
+    "x_end",
+    "width",
+    "height",
+    "area",
+    "accepted",
+    "reason",
+]
+
+NODULE_CSV_COLUMNS = [
+    "index",
+    "x_min",
+    "x_max",
+    "y_min",
+    "y_max",
+    "width",
+    "height",
+    "area",
+    "average_width",
+    "filter_stage",
+    "reason",
+]
+
+
+def _build_reject_table_from_infos(
+    nodule_infos: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+
+    for info in nodule_infos:
+        rows.append(
+            {
+                "zone_id": int(info.get("index", 0)),
+                "x_start": int(info.get("x_min", 0)),
+                "x_end": int(info.get("x_max", 0)),
+                "width": int(info.get("width", 0)),
+                "height": int(info.get("height", 0)),
+                "area": int(info.get("area", 0)),
+                "accepted": True,
+                "reason": str(
+                    info.get(
+                        "reason",
+                        "top2_bridge_broken_no_islands_min_max_avg_width_no_interruption_with_pleural_thickening_component",
+                    )
+                ),
+            }
+        )
+
+    return rows
+
+
+def _write_csv(
+    path: str,
+    rows: List[Dict[str, object]],
+    columns: List[str],
+) -> None:
+    with open(path, "w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def save_debug(
+    debug_images: Dict[str, object],
+    out_dir: str,
+    nodule_infos: List[Dict[str, object]] | None = None,
+    prefix: str = "",
+    save_stage_images: bool = True,
+) -> Dict[str, object]:
+    """Compatibilitate cu main.py.
+
+    In variantele vechi, primul argument era un dictionar de debug.
+    In main.py actual, se trimite direct nodule_result. Functia accepta ambele.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    pre = f"{prefix}_" if prefix else ""
+    written: Dict[str, object] = {"stage_images": []}
+
+    data = debug_images
+
+    if save_stage_images:
+        for stage in range(0, 6):
+            key = f"stage{stage}_debug_image"
+            image = data.get(key)
+            if isinstance(image, np.ndarray):
+                path = os.path.join(out_dir, f"{pre}{key}.png")
+                cv2.imwrite(path, image)
+                written["stage_images"].append(path)
+
+        for key in ["nodule_image", "candidate_debug_image"]:
+            image = data.get(key)
+            if isinstance(image, np.ndarray):
+                path = os.path.join(out_dir, f"{pre}{key}.png")
+                cv2.imwrite(path, image)
+                written["stage_images"].append(path)
+
+    infos = nodule_infos
+    if infos is None:
+        infos = data.get("nodule_infos", [])
+
+    reject_table = data.get("reject_table")
+    if reject_table is None:
+        reject_table = _build_reject_table_from_infos(infos)
+
+    reject_path = os.path.join(out_dir, f"{pre}reject_table.csv")
+    _write_csv(reject_path, reject_table, REJECT_CSV_COLUMNS)
+    written["reject_table"] = reject_path
+
+    nodule_path = os.path.join(out_dir, f"{pre}nodule_infos.csv")
+    _write_csv(nodule_path, infos, NODULE_CSV_COLUMNS)
+    written["nodule_infos"] = nodule_path
+
+    return written
+
+
+def append_reject_summary(
+    csv_path: str,
+    debug_images: Dict[str, object],
+    prefix: str = "",
+) -> str:
+    """Adauga reject_table intr-un CSV cumulativ.
+
+    Pentru varianta TOP2, fiecare componenta ramasa este trecuta ca acceptata,
+    fiindca momentan nu facem selectie reala de noduli.
+    """
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+
+    rows = debug_images.get("reject_table")
+    if rows is None:
+        rows = _build_reject_table_from_infos(debug_images.get("nodule_infos", []))
+
+    columns = ["image"] + REJECT_CSV_COLUMNS
+    exists = os.path.exists(csv_path)
+
+    with open(csv_path, "a", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
+        if not exists:
+            writer.writeheader()
+        for row in rows:
+            out = dict(row)
+            out["image"] = prefix
+            writer.writerow(out)
+
+    return csv_path
